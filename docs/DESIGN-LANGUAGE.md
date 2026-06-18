@@ -87,3 +87,30 @@ are advisory estimates, recomputed live as evidence arrives.
 Calm by default. Motion is information: a connection being born blooms; a dying one fades;
 throughput modulates a gentle pulse. Optional subtle audio cue only for red-band events
 (off by default). Beauty in service of truth.
+
+## 8. Dangerous actions — the consequence tree, and flowers to the safe path
+The GUI incarnation of the Android recovery screen (VISION → "the deeper why"): consequential
+danger is real, named, friction-gated, and recoverable — *never* a click-through. A confirmation
+for a real act (block a host, throttle an app, drop a rule, wipe history) is **not** a one-line
+"Are you sure? [OK]". It is a small **navigable consequence tree** the user traverses on purpose:
+
+- **The default action is null.** Enter / Return / a stray click does **nothing** toward the
+  dangerous outcome. There is no "default = proceed." Accidental acceptance is structurally
+  impossible — you cannot fall into harm.
+- **You must descend to it.** Reaching the confirm takes a deliberate motion — scroll down through
+  the consequences, open the branch you mean, *then* the act unlocks. The friction is the feature
+  (the recovery screen's physical buttons, translated to the pointer/keyboard).
+- **The branches are the truth, explorable — not a wall of text.** Each path the action could take
+  is a node you click *into*: "block github.com → these 3 live flows die now · this app loses its
+  sync · here's the severed link on the map · undo anytime." You see the consequence *before* you
+  cause it. (What you're previewing is the act ontology's `Ruling` — ONTOLOGY.md.)
+- **Flowers lead to the safe option, every time.** Bloom, here: the *safe* paths are the ones
+  gently lit and invitingly marked — "leave it observing," "dry-run / `--explain` first,"
+  "throttle instead of block," "do nothing." You are never nudged toward the cliff; the beautiful,
+  obvious, one-tap route is always the reversible one. **Danger you must climb down to; safety
+  blooms at the top.**
+- **Everything is recoverable.** Per D14, every act is a visible, undoable object — the bootloop
+  you can always un-loop.
+
+Same standard in the TUI: the destructive key is *never* Return; confirm is a typed word or a
+held key shown *after* the consequence list; the safe choices are the highlighted defaults.
