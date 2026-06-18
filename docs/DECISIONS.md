@@ -121,6 +121,39 @@ before it ships. IPC `FrameType` is non-exhaustive, so `user_state`/`rule`/`read
 frames are reserved now and added additively — `user_state` **before** the M4 GTK spike to
 prevent a silent parity fracture. See ONTOLOGY.md + STATE.md.
 
+## D19 — Act ontology ratified (2026-06-18): names kept, `Greeting` is its own type
+Resolves D17's open questions. Ben decided names + the `Greeting` type test + `Reading`
+cadence; the maintainer decided `EntityKey` granularity (Ben deferred). The frame is Fi/Ti
+(`~/.hermes/skills/fi-ti-debugging`): Cartograph is an **accurate Fi presentation of the
+network's Ti structure**, so a type is either Ti structure or an honest Fi layer over it,
+never both conflated.
+- **Names kept:** `Greeting / Rule / Reading / Ruling` (categories data/state/act stand).
+- **`Greeting` ≠ `Identity` (passes the type test).** `Identity` = the entity's *Ti structure*
+  (objective, derived enrichment). `Greeting` = the *Fi layer the user authors* over it
+  (`label`, `unseen/greeted/ignored`, `user_note`, `greeted_at_ms`, trust). It carries user
+  provenance + a survives-reboot lifetime + a privacy contract that `Identity` can't.
+  Merging them is a Fi bug (can't tell "what the net says" from "what I named"). `flow.fresh`
+  keeps its M1 "first-seen-this-run" meaning; "amber until greeted" is computed from the
+  `Greeting` at M3, not baked into `Flow`.
+- **`EntityKey` is a tagged union** `union(enum){ host, app, asn }` — a target's kind is
+  explicit, never flattened.
+- **`Reading` cadence is dual-mode**, keyed off the active profile: threshold-cross by default
+  (calm), every-rescore opt-in (security/resource, or `--readings=all`). Cadence rides the
+  existing lens/profile, not a new global flag.
+
+## D20 — Persistence: one sqlite DB; append-only act log + mutable state tables
+Resolves STATE.md's "format (proposed)". A **single on-disk sqlite database** is the backend.
+State slots (`greetings`, `rules`) are **mutable** tables; act-log slots (`readings`,
+`rulings`, history/DVR) are **append-only** (insert + retention-windowed prune from the tail,
+never edit) — an editable audit trail would lie about what the system did (a Fi bug). One
+backend, not two formats, keeps the storage guarantees consistent (a Ti win). sqlite is a C
+lib via trivial Zig FFI, in the same family as the already-accepted libbpf/nDPI/MMDB deps;
+the M1 "0 runtime deps" purity is an M1 property, not a forever constraint. *Escape hatch:* if
+a dependency-free surveyor is later judged worth more than SQL queryability, the append-only
+act log can fall back to a flat on-disk log — but the contract (mutable state / immutable acts)
+holds either way. Implementation is incremental (STATE.md "until built, it's in-memory");
+the contract lands at M2. *(Maintainer's call — Ben deferred the backend choice.)*
+
 ---
 
 <a id="install"></a>

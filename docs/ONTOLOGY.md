@@ -85,11 +85,45 @@ Cost when we land them: four enum variants + round-trip tests in `ipc.zig`.
   are designed *together* here (not a M7 afterthought).
 - **M8:** `Reading` + `Ruling` implementations drive the "Why" narrative + the postcard.
 
-## Open questions for ratification (Ben + Nexus)
-1. Names: `Greeting / Rule / Reading / Ruling` — keep, or rename? (Categories stay.)
-2. Does `Greeting` survive the type test vs `Identity`, or fold in?
-3. `EntityKey` granularity: host vs app vs ASN — one key type or a tagged union?
-4. Is `Reading` emitted on *every* rescore (chatty) or only on threshold-cross? (IPC volume.)
+## Ratified (2026-06-18) — locked, see DECISIONS D19/D20
+
+The four open questions are settled. Ben decided 1, 2, 4; the maintainer (Claude) decided
+3 and the persistence backend with Ben's standing "use your judgement." The Fi/Ti lens
+(`~/.hermes/skills/fi-ti-debugging`) is the frame Ben named for these: Cartograph is an
+**accurate Fi presentation of the network's Ti structure**, so every type either *is* Ti
+structure or *is* an honest Fi layer over it — and the two must never be conflated (that
+conflation is the canonical Fi bug).
+
+1. **Names: kept.** `Greeting / Rule / Reading / Ruling`. The categories (data/state/act)
+   were never in question; the names earned their keep.
+2. **`Greeting` survives the type test — it is a distinct type.** `Identity` (M3 enrichment:
+   GeoIP/ASN/nDPI/logo/fingerprint) is the entity's **Ti structure** — objective, derived,
+   re-computable, possibly involving an outbound fetch. `Greeting` is the **Fi layer the user
+   authors over it** — `label`, the `unseen/greeted/ignored` verdict-state, `user_note`,
+   `greeted_at_ms`, trust. It carries state `Identity` cannot: *user provenance*, a
+   *survives-reboot* lifetime, and a *privacy contract* (`Greeting.label` is the one user
+   field the LLM may see; see STATE.md). Folding it into `Identity` would be a **Fi bug** —
+   the surface could no longer distinguish "what the network says this is" from "what *I*
+   named it." Keep them separate.
+   - **Schema note (the `fresh` interaction, critique §2.1):** `flow.zig`'s `fresh: bool`
+     keeps its M1 meaning — *first-seen this run*. "Amber until **greeted**" is a *different*
+     state machine and is **not** baked into `Flow`; at M3 it is computed from the
+     `Greeting` (`greeted_at_ms`), so flow-freshness and entity-greeting stay separable.
+3. **`EntityKey` is a tagged union** — `union(enum){ host: Addr, app: AppId, asn: u32 }`.
+   A Greeting/Rule can target a host ("mom's VPN"), an app (`chrome`), or a whole ASN
+   ("all of Cloudflare"); one flat key type can't represent all three without lying about
+   which it is (a Fi smell). The tagged union makes the target's *kind* explicit on the wire
+   and in the UI. *(Maintainer's call — Ben deferred this one.)*
+4. **`Reading` cadence is dual-mode, keyed off the active profile.** Default
+   (calm/nerd profiles): emit only on a **threshold-cross** (impact/confidence band change) —
+   keeps the IPC quiet and matches "calm by default." Opt-in (security/resource profiles, or
+   `--readings=all` for an agent): emit on **every rescore**. Cadence is therefore a property
+   of the lens/profile already in the view-model, not a new global flag.
+
+**Persistence backend (D20):** one on-disk **sqlite** database. State slots (greetings,
+rules) are **mutable** tables; act-log slots (readings/rulings, history/DVR) are
+**append-only** — the audit trail must not be rewritable or the log would lie about what the
+system did (a Fi bug). See [STATE.md](STATE.md). *(Maintainer's call — Ben deferred this one.)*
 
 *Downstream use cases (postcard, greeting ritual, seasonal passage, the "Why" LLM contract)
 hang off these types — see the critique §3/§4 and [STATE.md](STATE.md).*

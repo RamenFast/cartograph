@@ -51,11 +51,15 @@
 5. **Land the ontology frame:** define the four types (thin), reserve the four IPC frames,
    add the fixture shape to the test corpus. `Greeting` gets its real implementation at M3.
 
-## Open questions to settle with Ben + Nexus (before coding the types)
-- Ontology names: keep `Greeting/Rule/Reading/Ruling`? (Categories data/state/act stay.)
-- Does `Greeting` pass the type test vs `Identity`, or fold in? (ONTOLOGY.md §type test.)
-- Persistence backend: sqlite vs append-only log per slot? (STATE.md table.)
-- `Reading` emission cadence: every rescore vs threshold-cross? (IPC volume.)
+## Open questions — RESOLVED 2026-06-18 (Ben + maintainer); see DECISIONS D19/D20
+- Ontology names: **kept** — `Greeting/Rule/Reading/Ruling` (Ben).
+- `Greeting` vs `Identity`: **passes the type test, stays its own type** — it's the Fi layer
+  the user authors over Identity's Ti structure; merging is a Fi bug (Ben + Fi/Ti frame).
+- Persistence backend: **one sqlite DB** — mutable state tables + append-only act log
+  (maintainer's call; Ben deferred).
+- `Reading` cadence: **dual-mode** — threshold-cross by default, every-rescore opt-in,
+  keyed off the active profile (Ben: "option for both").
+- `EntityKey` granularity: **tagged union** `host/app/asn` (maintainer's call; Ben deferred).
 
 ## Reflections on the M1 review loop (what the critique offered — for next-me)
 

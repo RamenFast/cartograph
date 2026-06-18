@@ -17,7 +17,14 @@ build it slot by slot.
 
 ## Persistence slots (one paragraph each)
 
-| slot | survives reboot? | format (proposed) | owner |
+> **Backend locked (DECISIONS D20, 2026-06-18):** one on-disk **sqlite** database. State
+> slots (greetings, rules) are **mutable** tables; act-log slots (readings/rulings,
+> history/DVR) are **append-only** — the audit trail must not be rewritable, or the log
+> would lie about what the system did (a Fi bug). Retention windowing prunes from the tail,
+> never edits a past row. Implementation stays incremental (a slot is "in-memory only" until
+> built); the *contract* below is what we build toward.
+
+| slot | survives reboot? | format (D20) | owner |
 |---|---|---|---|
 | **Live flows** | no — ephemeral by design | in-memory `FlowTable` | surveyor |
 | **Greetings** | **yes** | sqlite (`greetings`), or append-only log | surveyor (writes), frontends (read via IPC) |
