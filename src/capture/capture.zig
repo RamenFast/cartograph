@@ -78,3 +78,9 @@ pub const Capturer = struct {
         }
     }
 };
+
+test {
+    // Pull the capture-layer submodule tests (diag golden frames, proc) into
+    // `zig build test`, the way cartograph.zig does for the view-model.
+    std.testing.refAllDecls(@This());
+}
