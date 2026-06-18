@@ -23,6 +23,8 @@ Cross-resource and visual-language work is threaded through, not bolted on at th
   `libcartograph` — category color+glyph, animated throughput sparklines, IPv6-bracketed
   endpoints, fresh-flow glow, lens **profiles**. Runs in-process *or* over the IPC
   (`surveyor serve | cartograph --ipc`) through the same `render()` — parity proven.
+- ✅ **Agent/Unix surface** (D18): `surveyor snapshot --json` emits NDJSON (one flow per line,
+  stable schema) — `… --json | jq` is the kid tinkering *and* the agent reasoning, same pipe.
 - *Demo (real):* `zig build run` — past `nethogs` already (per-flow bytes **and** RTT
   **and** category **and** v6 **and** sparklines).
 - **libvaxis deferred, deliberately.** It targets Zig 0.15.1; on 0.16's reworked I/O it
@@ -37,6 +39,12 @@ Cross-resource and visual-language work is threaded through, not bolted on at th
 > **Threaded through M2–M8 (from Nexus critique v3):** the **act ontology**
 > ([ONTOLOGY.md](ONTOLOGY.md)) and the **persistence/privacy contract** ([STATE.md](STATE.md))
 > are designed up front so M3 (scoring), M6 (blocking), and M8 (narration) stay coherent.
+>
+> **Agent-native surface (D18, [AGENT-INTERFACE.md](AGENT-INTERFACE.md)):** every verb is a real
+> Unix program — NDJSON in a pipe, pretty at a TTY, no AI left out. First slice shipped in M1
+> (`surveyor snapshot --json`); `serve --json` event stream + `--schema` + isatty-auto follow.
+> When enforcement lands (M6), `block`/`allow` return a JSON `Ruling` so an agent acts *and reads
+> back what it did*.
 
 ## M2 — eBPF capture + attribution (privileged core)
 - eBPF on tcp_connect / sock_state / exec (Zig→BPF or libbpf via FFI); BPF ring buffer →

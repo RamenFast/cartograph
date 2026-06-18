@@ -4,6 +4,11 @@
 > is required to start; every step deeper is discoverable, forgiving, and a little
 > delightful. Verbs read like sentences. Help is beautiful. You never memorize flags —
 > you *guess right*.
+>
+> **Two readers, one program (D18).** Bloom is for the *human at a TTY*. The same verbs, in a
+> pipe, speak **NDJSON** for *agents, scripts, and kids with `jq`* — pretty when interactive,
+> structured when piped (the Unix `isatty` rule). No SDK, no glyphs to learn, no AI left out.
+> The machine-readable contract is its own doc: **[AGENT-INTERFACE.md](AGENT-INTERFACE.md)**.
 
 ## Bloom principles
 1. **Zero-friction start.** `cartograph` with no args just works (launches the best

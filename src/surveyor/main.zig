@@ -25,10 +25,16 @@ pub fn main(init: std.process.Init) !void {
     _ = args.next(); // argv0
     const cmd = args.next() orelse "snapshot";
 
+    // Simple, agent-legible flag scan (order-independent). See docs/AGENT-INTERFACE.md.
+    var as_json = false;
+    while (args.next()) |a| {
+        if (std.mem.eql(u8, a, "--json")) as_json = true;
+    }
+
     if (std.mem.eql(u8, cmd, "serve")) {
         try serve(gpa, io);
     } else if (std.mem.eql(u8, cmd, "snapshot")) {
-        try snapshot(gpa, io);
+        try snapshot(gpa, io, as_json);
     } else if (std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "help")) {
         try usage(io);
     } else {
@@ -53,7 +59,8 @@ fn usage(io: std.Io) !void {
 }
 
 /// One-shot, human-readable table — the promoted spike, now tcp6/udp + bytes + RTT.
-fn snapshot(gpa: std.mem.Allocator, io: std.Io) !void {
+/// `as_json` emits NDJSON instead: the agent/script surface (`snapshot --json | jq`).
+fn snapshot(gpa: std.mem.Allocator, io: std.Io, as_json: bool) !void {
     var cap = try capture.Capturer.init(gpa, io);
     defer cap.deinit();
     var table = cartograph.FlowTable.init(gpa);
@@ -68,6 +75,16 @@ fn snapshot(gpa: std.mem.Allocator, io: std.Io) !void {
     var buf: [128 * 1024]u8 = undefined;
     var fw = std.Io.File.stdout().writer(io, &buf);
     const w = &fw.interface;
+
+    if (as_json) {
+        // NDJSON: one flow per line. No color, no header — pure, pipeable data.
+        for (flows) |f| {
+            try cartograph.json.writeFlow(w, f);
+            try w.writeByte('\n');
+        }
+        try w.flush();
+        return;
+    }
 
     try w.print("{s}cartograph · surveyor{s} {s}— live attributed flows (inet_diag + /proc)\n\n{s}", .{ BOLD, RST, DIM, RST });
     try w.print("{s}{s:<6} {s:<15} {s:<3} {s:<10} {s:<21} {s:<21} {s:>9} {s:>9} {s:>6}{s}\n", .{

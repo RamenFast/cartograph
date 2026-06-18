@@ -141,6 +141,7 @@ cartograph/
     ├── ROADMAP.md         ← the journey: milestones M0→M9
     ├── DECISIONS.md       ← locked decisions (incl. "do we recompile the kernel?")
     ├── ONTOLOGY.md        ← the act ontology (Greeting/Rule/Reading/Ruling) — the frame
+    ├── AGENT-INTERFACE.md ← the agent/Unix surface — NDJSON, "no AI left out" (D18)
     ├── STATE.md           ← persistence + privacy contract; the `?`-flow design question
     ├── TOOLCHAIN.md       ← Zig 0.16 churn notes + freeze/longevity plan
     ├── STRUCTURE.md       ← project layout + collaboration conventions

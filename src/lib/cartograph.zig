@@ -14,6 +14,7 @@ pub const sparkline = @import("sparkline.zig");
 pub const ipc = @import("ipc.zig");
 pub const table = @import("table.zig");
 pub const lens = @import("lens.zig");
+pub const json = @import("json.zig");
 
 // Convenience re-exports of the most-used types.
 pub const Proto = flow.Proto;

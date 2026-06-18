@@ -100,6 +100,18 @@ only when deps (libvaxis, zig-gobject) track it, on a deliberate branch, never m
 Patch upstream deps in-tree and record patches. Living on 0.16 for a year is acceptable — the
 std surface we use is small. Full notes + the churn list: TOOLCHAIN.md. (Critique v3 §5.6.)
 
+## D18 — Agent-native by construction: a real Unix program, no AI left out
+Per Ben (2026-06-17): Cartograph must be drivable by **any** agent through plain bash — and by
+any kid with `jq` — as a first-class surface, not an afterthought. **The agent and the kid are
+the same user.** Concretely: structured **NDJSON** output (`--json`, one flow per line, stable
+field names, numbers as numbers, `pid:0`=unattributed), the Unix `isatty` rule (pretty at a
+TTY, structured in a pipe), parseable `--help` + a planned `--schema`, meaningful exit codes,
+and **no SDK / no glyphs / no special integration** (substrate-neutral — the HCL-portable
+principle from Fi/Ti debugging, applied to the interface). Each surface (table / NDJSON / binary
+IPC) is a renderer over `libcartograph`, so the agent surface can't drift from the UI — *the
+surface doesn't lie.* First slice shipped: `surveyor snapshot --json`. Full contract:
+AGENT-INTERFACE.md.
+
 ## D17 — Adopt an act ontology as the design frame (types ratify per-milestone)
 Per Nexus critique v3 §2/§8: the repo has data-nouns but no **act-nouns**. We adopt a three-
 category frame — **data / state / act** — with provisional types `Greeting` (data, M3),
