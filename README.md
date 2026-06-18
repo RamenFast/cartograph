@@ -102,11 +102,12 @@ stream. See **[docs/EXPERIMENTS.md](docs/EXPERIMENTS.md)**.
 ./zig-out/bin/surveyor snapshot       # one-shot human-readable attributed table
 ./zig-out/bin/surveyor snapshot --json | jq   # the agent/Unix surface (NDJSON)
 
-# eBPF capture (M2, opt-in: needs clang+bpftool to build, setcap to load):
-./toolchain/zig build -Dbpf=true      # adds the CO-RE source + 3 eBPF decode tests
-sudo setcap cap_bpf,cap_perfmon,cap_net_raw,cap_net_admin+ep ./zig-out/bin/surveyor
-./zig-out/bin/surveyor snapshot --bpf # falls back to inet_diag (loudly) without caps
+# eBPF capture (M2, opt-in). One script builds it, grants caps, and tests it:
+./scripts/try-ebpf.sh                 # asks for your password once (setcap only)
+./scripts/try-ebpf.sh --undo          # remove the caps, back to unprivileged
 ```
+Without caps, `surveyor … --bpf` falls back to the inet_diag path *loudly* (it tells
+you exactly what's missing) — it never silently downgrades and never crashes.
 
 The TUI shows, per flow: the owning app + category glyph, the (IPv6-bracketed) endpoint,
 a live throughput **sparkline**, total bytes, and **RTT** — all from real cumulative
