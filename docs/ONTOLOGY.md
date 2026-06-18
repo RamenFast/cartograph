@@ -61,7 +61,7 @@ show it holds state (`label`, verdict, staleness, trust) that `Identity` *can't*
 as "just `Identity + label`," fold it into `Identity` and move on. Same gate for the others.
 *Test the type before you ship it.* Names are negotiable; the categories are not.
 
-## IPC frame reservations (design now, code at the landing milestone)
+## IPC frame reservations — ✅ landed thin in M2 (`ipc.zig`)
 
 `ipc.zig`'s `FrameType` is intentionally **non-exhaustive** (`_`), so adding variants later is
 non-breaking and forward-readers already skip unknown frames. Reserve these names so the wire
@@ -75,12 +75,17 @@ protocol grows additively and a renderer never needs a private state cache:
 - `reading` — a new `Reading` (observation only).
 - `ruling` — a new `Ruling` (act; renderer shows the severed link, D14).
 
-Cost when we land them: four enum variants + round-trip tests in `ipc.zig`.
+Cost paid in M2: four `FrameType` variants (6–9), encode/decode in `ipc.zig`, and a
+round-trip test per frame — plus a test that an *unknown* frame is skipped so the protocol
+provably grows additively. `protocol_version` bumped 1→2 (informative; v1 readers skip them).
 
 ## Landing plan
-- **M2/M3:** define the four types with thin/empty implementations + reserve the IPC frames +
-  add the fixture shape to the test corpus. `Greeting` gets a real implementation at M3
-  (scoring), backed by the persistence contract in [STATE.md](STATE.md).
+- **M2:** ✅ done. Four types defined thin in `src/lib/ontology.zig` (`EntityKey` tagged
+  union; `Greeting` distinct from `Identity`); four IPC frames defined + round-tripped; the
+  fixture shape is in the test corpus. `user_state` is fully encodable now (it had to exist
+  before the M4 GTK spike).
+- **M3:** `Greeting` gets its real (sqlite-backed, D20) implementation + scoring emits
+  `Reading`s, backed by the persistence contract in [STATE.md](STATE.md).
 - **M6:** `Rule` implementation (XDP allow/block/throttle); `.ignored` visual + Rule visuals
   are designed *together* here (not a M7 afterthought).
 - **M8:** `Reading` + `Ruling` implementations drive the "Why" narrative + the postcard.

@@ -15,6 +15,7 @@ pub const ipc = @import("ipc.zig");
 pub const table = @import("table.zig");
 pub const lens = @import("lens.zig");
 pub const json = @import("json.zig");
+pub const ontology = @import("ontology.zig");
 pub const parity = @import("parity.zig");
 
 // Convenience re-exports of the most-used types.
