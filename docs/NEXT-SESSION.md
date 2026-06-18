@@ -4,9 +4,15 @@
 > ONTOLOGY.md and STATE.md. Goal of next session: **start M2 on the frame the critique gave us.**
 
 ## Where we are
-- **M1 shipped and is on `main`** (private repo `RamenFast/cartograph`): `libcartograph`
-  view-model, a capture core (inet_diag byte counters + RTT + /proc attribution), and a live
-  TUI that runs in-process *or* over the binary IPC. `zig build` / `run` / `test` all green.
+- **M2 built and on `main`** (2026-06-18). The eBPF capture source (CO-RE,
+  `tp_btf/inet_sock_set_state`, `-Dbpf=true`) behind the `Source` seam; the Unix-socket
+  privilege boundary; the act ontology (D19) + four IPC frames; the `?`-flow answer
+  (`service`/`exposure`); and the full test discipline (golden frames, in-process↔IPC parity,
+  eBPF decode). `zig build test` = 32 green; `-Dbpf=true` = 35. **One honest gap:** the eBPF
+  *live attach* is unverified in-sandbox (no CAP_BPF) — Ben validates it under `setcap`; the
+  fallback to inet_diag is verified. See ROADMAP M2 (all bullets ✅).
+- **M1 shipped** (prior session): `libcartograph` view-model, the inet_diag/proc capture core,
+  the live TUI in-process *or* over the binary IPC.
 - **Nexus critique v3 reviewed and acted on** (this session). The critique is excellent and
   its findings align with M1's self-flagged soft spots. Full text:
   `~/Nexus/archive/🏮Nexus/2026-06-17/cartograph-critique-v3.md`.
@@ -34,7 +40,16 @@
   deadline: **before the M4 GTK spike.**
 - **UDP throughput** stays a known limitation, not a half-fix.
 
-## M2 — recommended order of attack
+## M3 — what's next (the natural follow-on)
+- **`setcap` + live eBPF validation first** (Ben, root): confirm the attach works on this
+  kernel and the ring-buffer events flow, closing the `?` rows for real. Then enrichment:
+  passive DNS + TLS SNI, offline GeoIP/ASN MMDB, **nDPI** classification, and the transparent
+  **impact/confidence scoring** that emits `Reading`s. `Greeting` gets its real sqlite-backed
+  (D20) implementation; every M1/M2 in-process test gains its IPC twin.
+- **Byte counters on the eBPF path:** the current eBPF hook is the state machine (no bytes);
+  a `tcp_sendmsg`/sockops counter program (or keep inet_diag for bytes) is the M3 follow-up.
+
+## M2 — recommended order of attack (✅ all done this session — kept for the record)
 1. **Test scaffolding first** (unblocks everything, and the critique is right that M2/M3 is
    where bug density explodes):
    - a **netlink mock** for `diag.zig` so capture decoding is testable without root;
