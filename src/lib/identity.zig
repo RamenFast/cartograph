@@ -114,6 +114,147 @@ fn byPort(local_port: u16, remote_port: u16) Category {
     };
 }
 
+/// The precise well-known **service** a flow speaks, inferred from ports + state and
+/// **independent of process attribution**. This is libcartograph's answer to "what does
+/// the user do about an unattributed (`pid==0`) flow?" (STATE.md, critique §5.3): even
+/// when we can't name the *process*, we can still name the *service*, so an unattributed
+/// systemd-resolved DNS query or a CUPS listener is legible — not a `?` dead-end. The
+/// answer lives here (the view-model), so TUI and GTK can never diverge on it. Derived
+/// purely from fields already on the wire, so it costs the IPC nothing.
+///
+/// (`Category` is the coarse color/glyph bucket; `Service` is the daemon-precise name.)
+pub const Service = enum(u8) {
+    unknown = 0,
+    ssh, // 22
+    dns, // 53
+    dhcp, // 67/68
+    http, // 80/8080
+    https, // 443/8443
+    ntp, // 123
+    ipp, // 631 — CUPS (the recent-CVE LAN listener the mirror must not miss)
+    smtp, // 25/465/587
+    imap, // 143/993
+    pop3, // 110/995
+    mdns, // 5353
+    netbios, // 137-139
+    rpc, // 111
+    mysql, // 3306
+    postgres, // 5432
+    redis, // 6379
+
+    pub fn label(s: Service) []const u8 {
+        return switch (s) {
+            .unknown => "unknown",
+            .ssh => "ssh",
+            .dns => "dns",
+            .dhcp => "dhcp",
+            .http => "http",
+            .https => "https",
+            .ntp => "ntp",
+            .ipp => "ipp",
+            .smtp => "smtp",
+            .imap => "imap",
+            .pop3 => "pop3",
+            .mdns => "mdns",
+            .netbios => "netbios",
+            .rpc => "rpc",
+            .mysql => "mysql",
+            .postgres => "postgres",
+            .redis => "redis",
+        };
+    }
+};
+
+fn byServicePort(p: u16) Service {
+    return switch (p) {
+        22 => .ssh,
+        53 => .dns,
+        67, 68 => .dhcp,
+        80, 8080 => .http,
+        443, 8443 => .https,
+        123 => .ntp,
+        631 => .ipp,
+        25, 465, 587 => .smtp,
+        143, 993 => .imap,
+        110, 995 => .pop3,
+        5353 => .mdns,
+        137, 138, 139 => .netbios,
+        111 => .rpc,
+        3306 => .mysql,
+        5432 => .postgres,
+        6379 => .redis,
+        else => .unknown,
+    };
+}
+
+pub fn service(key: flow.FlowKey, state: flow.TcpState) Service {
+    if (state == .listen) return byServicePort(key.local_port);
+    // outbound: the server port is the remote; fall back to local for inbound.
+    const r = byServicePort(key.remote_port);
+    return if (r != .unknown) r else byServicePort(key.local_port);
+}
+
+/// How reachable a **listener** is — the attack-surface axis of the "what can the world
+/// see of me" mirror. Non-listeners have no surface of their own (`.none`).
+pub const Exposure = enum(u8) {
+    none = 0, // not a listener
+    loopback, // 127.0.0.0/8 or ::1 — reachable only from this box (safe)
+    network, // a private/LAN addr, or 0.0.0.0/:: (all interfaces) — reachable from your network
+    internet, // a specific public address — reachable from the internet
+
+    pub fn label(e: Exposure) []const u8 {
+        return switch (e) {
+            .none => "none",
+            .loopback => "loopback",
+            .network => "network",
+            .internet => "internet",
+        };
+    }
+};
+
+pub fn exposure(key: flow.FlowKey, state: flow.TcpState) Exposure {
+    if (state != .listen) return .none;
+    const a = key.local;
+    if (a.isLoopback()) return .loopback;
+    // 0.0.0.0/:: binds every interface; we can't prove internet-routability without the
+    // routing table (M3+), so the honest floor is "reachable from your network".
+    if (a.isUnspecified() or a.isPrivate()) return .network;
+    return .internet;
+}
+
+test "service is named even without attribution (the ? answer)" {
+    const t = std.testing;
+    const Addr = flow.Addr;
+    const k = struct {
+        fn f(local_port: u16, remote: Addr, rp: u16) flow.FlowKey {
+            return .{ .proto = .tcp, .local = Addr.v4(.{ 192, 168, 1, 9 }), .local_port = local_port, .remote = remote, .remote_port = rp };
+        }
+    }.f;
+
+    // systemd-resolved forwarding DNS, unattributed — still legibly "dns"
+    try t.expectEqual(Service.dns, service(k(40000, Addr.v4(.{ 1, 1, 1, 1 }), 53), .established));
+    // a CUPS listener on :631 — the mirror must name it
+    try t.expectEqual(Service.ipp, service(k(631, Addr.v4(.{ 0, 0, 0, 0 }), 0), .listen));
+    try t.expectEqual(Service.ssh, service(k(22, Addr.v4(.{ 0, 0, 0, 0 }), 0), .listen));
+    try t.expectEqual(Service.unknown, service(k(44321, Addr.v4(.{ 9, 9, 9, 9 }), 51999), .established));
+}
+
+test "exposure flags the attack surface for listeners" {
+    const t = std.testing;
+    const Addr = flow.Addr;
+    const k = struct {
+        fn f(local: Addr, lp: u16) flow.FlowKey {
+            return .{ .proto = .tcp, .local = local, .local_port = lp, .remote = Addr.v4(.{ 0, 0, 0, 0 }), .remote_port = 0 };
+        }
+    }.f;
+
+    try t.expectEqual(Exposure.loopback, exposure(k(Addr.v4(.{ 127, 0, 0, 1 }), 631), .listen));
+    try t.expectEqual(Exposure.network, exposure(k(Addr.v4(.{ 0, 0, 0, 0 }), 631), .listen)); // all interfaces
+    try t.expectEqual(Exposure.network, exposure(k(Addr.v4(.{ 192, 168, 1, 9 }), 22), .listen));
+    try t.expectEqual(Exposure.internet, exposure(k(Addr.v4(.{ 203, 0, 113, 7 }), 443), .listen));
+    try t.expectEqual(Exposure.none, exposure(k(Addr.v4(.{ 192, 168, 1, 9 }), 50000), .established)); // not a listener
+}
+
 test "classify by tuple" {
     const t = std.testing;
     const Addr = flow.Addr;

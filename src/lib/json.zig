@@ -25,6 +25,10 @@ pub fn writeFlow(w: *Writer, f: *const Flow) Writer.Error!void {
     try str(w, f.state.label());
     try field(w, "category", true);
     try str(w, f.category.label());
+    try field(w, "service", true);
+    try str(w, f.service().label());
+    try field(w, "exposure", true);
+    try str(w, f.exposure().label());
     try field(w, "pid", true);
     try w.print("{d}", .{f.pid});
     try field(w, "uid", true);
@@ -115,4 +119,7 @@ test "flow emits valid, parseable json" {
     try t.expectEqual(@as(i64, 410_000), obj.get("rx_bytes").?.integer);
     try t.expectEqualStrings("160.79.104.10", obj.get("remote").?.string);
     try t.expectEqual(@as(i64, 443), obj.get("remote_port").?.integer);
+    // the `?`-flow answer is on the agent surface too (derived, always present)
+    try t.expectEqualStrings("https", obj.get("service").?.string);
+    try t.expectEqualStrings("none", obj.get("exposure").?.string);
 }

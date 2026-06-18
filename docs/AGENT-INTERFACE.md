@@ -30,8 +30,10 @@ silent one (a parser that breaks tomorrow on today's output is a Ti bug, and we 
 |---|---|---|
 | `proto` | string | `tcp` \| `udp` |
 | `state` | string | `ESTAB`, `LISTEN`, `TIME_WAIT`, … |
-| `category` | string | `web`/`dns`/`lan`/`loopback`/`listen`/… (the universal fallback) |
-| `pid` | number | **`0` = unattributed** (kernel / other-user / short-lived) |
+| `category` | string | `web`/`dns`/`lan`/`loopback`/`listen`/… (the coarse color/glyph bucket) |
+| `service` | string | daemon-precise service from ports, **attribution-independent**: `ssh`/`dns`/`ipp`/`http`/… (`unknown` if unrecognised). The `?`-flow answer — a `pid:0` flow is still named. |
+| `exposure` | string | listener attack-surface: `none` (not a listener) · `loopback` · `network` · `internet` |
+| `pid` | number | **`0` = unattributed** (kernel / other-user / short-lived) — see `service` |
 | `uid` | number | owning user id |
 | `comm` | string | process short name (may be empty) |
 | `exe` | string | resolved executable path (may be empty) |

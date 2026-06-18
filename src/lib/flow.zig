@@ -244,6 +244,23 @@ pub const Flow = struct {
     pub fn name(f: *const Flow) []const u8 {
         return if (f.comm.len > 0) f.comm.slice() else f.key.proto.label();
     }
+
+    /// The well-known service this flow speaks — named even when unattributed (the
+    /// `?`-flow answer, STATE.md). A pure derivation, so renderers never diverge.
+    pub fn service(f: *const Flow) identity.Service {
+        return identity.service(f.key, f.state);
+    }
+
+    /// Attack-surface exposure for a listener (`.none` for non-listeners).
+    pub fn exposure(f: *const Flow) identity.Exposure {
+        return identity.exposure(f.key, f.state);
+    }
+
+    /// A known service we couldn't attribute to a PID — legible, not a `?` dead-end.
+    /// (sshd / cups / systemd-resolved / nginx are the security-relevant cases.)
+    pub fn isUnattributedDaemon(f: *const Flow) bool {
+        return !f.attributed() and f.service() != .unknown;
+    }
 };
 
 test "addr classification" {
@@ -254,6 +271,28 @@ test "addr classification" {
     try t.expect(!Addr.v4(.{ 8, 8, 8, 8 }).isPrivate());
     try t.expect(Addr.v4(.{ 224, 0, 0, 251 }).isMulticast());
     try t.expect(Addr.v6(.{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 }).isLoopback());
+}
+
+test "unattributed daemon flows stay legible (the ? answer)" {
+    const t = std.testing;
+    // a DNS query we can't pin to a PID (systemd-resolved) — still a known daemon
+    var dns: Flow = .{ .key = .{ .proto = .udp, .local = Addr.v4(.{ 192, 168, 1, 9 }), .local_port = 40000, .remote = Addr.v4(.{ 1, 1, 1, 1 }), .remote_port = 53 } };
+    dns.state = .established;
+    dns.pid = 0;
+    try t.expect(dns.isUnattributedDaemon());
+    try t.expectEqual(identity.Service.dns, dns.service());
+
+    // a CUPS listener bound to all interfaces — part of the attack surface
+    var cups: Flow = .{ .key = .{ .proto = .tcp, .local = Addr.v4(.{ 0, 0, 0, 0 }), .local_port = 631, .remote = Addr.v4(.{ 0, 0, 0, 0 }), .remote_port = 0 } };
+    cups.state = .listen;
+    try t.expectEqual(identity.Service.ipp, cups.service());
+    try t.expectEqual(identity.Exposure.network, cups.exposure());
+
+    // an attributed flow is not an "unattributed daemon"
+    var web: Flow = .{ .key = .{ .proto = .tcp, .local = Addr.v4(.{ 192, 168, 1, 9 }), .local_port = 50000, .remote = Addr.v4(.{ 140, 82, 121, 4 }), .remote_port = 443 } };
+    web.state = .established;
+    web.pid = 1234;
+    try t.expect(!web.isUnattributedDaemon());
 }
 
 test "ipv6 formatting with compression" {

@@ -77,6 +77,16 @@ first-class design question, and the answer must live in `libcartograph` (so TUI
 diverge). The eBPF attribution, the `Greeting` type, and this privacy posture are **one design
 question wearing three labels.**
 
+> **✅ Answered in M2 (view-model half).** `identity.service(key,state)` names the daemon-precise
+> service (ssh/dns/ipp/http/…) **independent of attribution**, and `identity.exposure(key,state)`
+> grades a listener's reach (loopback/network/internet). Both are pure derivations from fields
+> already on the wire, live in `libcartograph` (so every renderer agrees), and surface on the NDJSON
+> agent contract (`service`, `exposure`). A `pid:0` flow is now legible, not a `?` dead-end:
+> `surveyor snapshot --json | jq 'select(.pid==0 and .service!="unknown")'` lists the known-but-
+> unattributed daemons, and `… | jq 'select(.exposure=="network" or .exposure=="internet")'` is the
+> attack-surface mirror. The *eBPF* half (actually attributing those rows to a PID in-kernel) is the
+> capture-source work; the *legibility* half no longer depends on it.
+
 ## CLI surface caveat (don't write checks the build can't cash)
 
 `--no-fetch` and friends in CLI.md are **aspirational** — there is no arg-parser module in the
