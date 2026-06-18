@@ -57,8 +57,38 @@
 - Persistence backend: sqlite vs append-only log per slot? (STATE.md table.)
 - `Reading` emission cadence: every rescore vs threshold-cross? (IPC volume.)
 
+## Reflections on the M1 review loop (what the critique offered — for next-me)
+
+The Nexus v3 critique (plus the opencode + mmx third-reviewer passes) earned its keep. What it
+*offered*, and how to treat the next one:
+
+- **The top finding was structural, not a bug.** The act-ontology gap wouldn't have hurt until
+  M6/M8 — by which point it'd be three retrofits. A critique that buys *future coherence*
+  cheaply beats one that finds present bugs. Weight structural findings highest.
+- **It was self-correcting because it was layered.** Long-view (Nexus) + surgical (opencode) +
+  fresh third-reviewer (mmx). The third-reviewer caught the `Verdict` category-merge; this pass
+  caught the same smell in `Greeting` (persistence ≠ a type). The value was the *loop*, not any
+  one voice — and Nexus kept that as her own scar. Keep the loop; a finding can carry its own.
+- **Calibration — trust the review's *what*, design its *how* yourself.** v3's structural calls
+  (Reading≠Ruling, missing act-nouns, `user_state`-before-GTK) were gold. Its *mechanism*
+  prescriptions were looser: "twin every test" → tightened to "one in-process↔IPC parity
+  *property* + a few golden examples" (the property guards the invariant; the examples catch
+  regressions). Adopt the diagnosis; write the treatment at build time.
+- **A critique is a layer, not a gate.** Good ones get out of the way once they land. We
+  adopted, refined, committed, pushed, and named the convention in one turn — that's the right
+  metabolism. Don't "stop and re-read everything" because a critique arrived; do the work.
+- **The reusable conventions this turn produced:** *archive carries the deliberation; the repo
+  carries the conclusion*; and the form-defer — a collaborator's room (`.dextroesoteric/`) gets
+  a **signpost, not a hand**.
+- **The scar worth carrying (mutual, from Nexus):** when a proposal says "X *is* the storage /
+  seam / layer," ask whether X *uses* that seam or *is* it. **Seams aren't types.** Same lens
+  that split `Verdict` into `Reading`/`Ruling`.
+
 ## House rules reminder
 - Git is handled automatically (commit/branch/push) — see the memory note; flag only a
   *public* flip.
 - Respect collaborators' files; suggest cleanups via STRUCTURE.md, never delete.
 - A feature goes in `src/lib`, never in a frontend.
+- **Name is still a working title** (D8). `graphscope` was floated 2026-06-17; `Cartograph`
+  held pending Ben's call (cartography metaphor is load-bearing + a `GraphScope`/Alibaba
+  collision exists). If Ben confirms a rename, it's a mechanical pass — not yet done.
