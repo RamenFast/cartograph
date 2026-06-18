@@ -154,6 +154,15 @@ act log can fall back to a flat on-disk log — but the contract (mutable state 
 holds either way. Implementation is incremental (STATE.md "until built, it's in-memory");
 the contract lands at M2. *(Maintainer's call — Ben deferred the backend choice.)*
 
+## D21 — GTK frontend is built incrementally, every step (not deferred to M4)
+Per Ben (2026-06-18): build the GTK UI alongside every feature from now on, rather than waiting
+for an "M4 frontends" milestone. Ben is a visual user — he wants to *see* each layer as it lands,
+and the project's thesis ("an operating system you can *see*") is undercut by a deferred GUI; a
+CLI-only eBPF test left him lost. **Mechanism is unchanged (D9/D10):** GTK4 via zig-gobject over
+`libcartograph`, reading the binary IPC across the Unix socket (already live, D6/M2); TUI and GTK
+stay thin renderers of one view-model, parity by construction. The GTK stack is already installed.
+This re-threads the ROADMAP: GTK work moves out of M4 and into each milestone. See FRONTENDS.md.
+
 ---
 
 <a id="install"></a>

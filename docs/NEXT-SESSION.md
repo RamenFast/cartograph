@@ -8,9 +8,10 @@
   `tp_btf/inet_sock_set_state`, `-Dbpf=true`) behind the `Source` seam; the Unix-socket
   privilege boundary; the act ontology (D19) + four IPC frames; the `?`-flow answer
   (`service`/`exposure`); and the full test discipline (golden frames, in-process↔IPC parity,
-  eBPF decode). `zig build test` = 32 green; `-Dbpf=true` = 35. **One honest gap:** the eBPF
-  *live attach* is unverified in-sandbox (no CAP_BPF) — Ben validates it under `setcap`; the
-  fallback to inet_diag is verified. See ROADMAP M2 (all bullets ✅).
+  eBPF decode). `zig build test` = 32 green; `-Dbpf=true` = 35. **eBPF live-attach VERIFIED**
+  2026-06-18 (Ben ran `scripts/try-ebpf.sh` — caps stuck, program loaded, no fallback). Caveat:
+  eBPF as-built is an event *augmenter* (sees state transitions, not the existing table), so the
+  M3 hybrid fusion is what makes it useful in the normal view. See ROADMAP M2/M3.
 - **M1 shipped** (prior session): `libcartograph` view-model, the inet_diag/proc capture core,
   the live TUI in-process *or* over the binary IPC.
 - **Nexus critique v3 reviewed and acted on** (this session). The critique is excellent and
@@ -40,14 +41,21 @@
   deadline: **before the M4 GTK spike.**
 - **UDP throughput** stays a known limitation, not a half-fix.
 
-## M3 — what's next (the natural follow-on)
-- **`setcap` + live eBPF validation first** (Ben, root): confirm the attach works on this
-  kernel and the ring-buffer events flow, closing the `?` rows for real. Then enrichment:
-  passive DNS + TLS SNI, offline GeoIP/ASN MMDB, **nDPI** classification, and the transparent
-  **impact/confidence scoring** that emits `Reading`s. `Greeting` gets its real sqlite-backed
-  (D20) implementation; every M1/M2 in-process test gains its IPC twin.
-- **Byte counters on the eBPF path:** the current eBPF hook is the state machine (no bytes);
-  a `tcp_sendmsg`/sockops counter program (or keep inet_diag for bytes) is the M3 follow-up.
+## Next stage — the GTK UI (Ben's directive, D21), then M3
+**Build the GTK UI now** (D21, [[feedback]]-equivalent): a minimal GTK4 window over the IPC
+socket showing the live flow table, then grow it with every feature. Ben is visual and got lost
+in CLI-only testing — he wants to *see* each layer. Mechanism: GTK4 + zig-gobject over
+`libcartograph`, reading the binary IPC over the Unix socket (already live). Start with the spike
+(D10: zig-gobject; Vala fallback if ergonomics bite), a window listing flows from
+`surveyor serve --socket`, then category color/glyph, then the lenses. **Report with a
+screenshot, not a CLI dump.** GTK stack is already installed (gtk4 4.14.5, libadwaita 1.5.0).
+
+Then M3 capture/enrichment:
+- **Hybrid capture first:** fuse inet_diag (baseline + bytes) with eBPF events so `--bpf` shows
+  the existing table *and* the closed `?` rows (M2 left `.bpf` either/or — see ROADMAP M3).
+- Enrichment (DNS/SNI, GeoIP/ASN MMDB, nDPI) + impact/confidence scoring emitting `Reading`s;
+  `Greeting` gets its real sqlite-backed (D20) implementation; every test gains its IPC twin.
+- Byte counters on the eBPF path (sockops/`tcp_sendmsg`) — or keep inet_diag as the byte source.
 
 ## M2 — recommended order of attack (✅ all done this session — kept for the record)
 1. **Test scaffolding first** (unblocks everything, and the critique is right that M2/M3 is

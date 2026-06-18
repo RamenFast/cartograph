@@ -68,12 +68,24 @@ if echo "$OUT" | grep -q "eBPF source unavailable"; then
   exit 1
 else
   ROWS="$(echo "$OUT" | grep -cE 'ESTAB|LISTEN|CLOSE|SYN' || true)"
-  echo "${green}${bold}eBPF attached and is capturing. 🎉${rst}"
-  echo "    saw ${ROWS} flow row(s) from the kernel ring buffer (no fallback note printed)."
+  echo "${green}${bold}eBPF attached — the kernel accepted the program. 🎉${rst}"
+  echo "    (the real win: caps work and there was no fallback to inet_diag.)"
   echo
-  echo "Try the live view over the privilege boundary:"
-  echo "    ${dim}$SURVEYOR serve --socket /tmp/cg.sock &${rst}"
-  echo "    ${dim}$REPO/zig-out/bin/cartograph --ipc --socket /tmp/cg.sock${rst}"
+  if [ "${ROWS:-0}" -eq 0 ]; then
+    echo "${bold}It listed 0 rows — and that's expected here, not a failure.${rst}"
+    echo "This hook fires on TCP state *changes*, so a one-shot snapshot (an instant in time)"
+    echo "catches nothing unless a connection changes state right at that moment. eBPF sees"
+    echo "${bold}new${rst} activity; your ${bold}existing${rst} connections come from the normal path. To see it fire,"
+    echo "watch the live stream and make a connection in another terminal:"
+    echo "    ${dim}$SURVEYOR serve --bpf >/dev/null &${rst}"
+    echo "    ${dim}curl -s https://example.com >/dev/null   # this triggers an event${rst}"
+    echo
+    echo "For the full picture right now, the normal (no --bpf) path shows everything:"
+    echo "    ${dim}$SURVEYOR snapshot${rst}"
+    echo "${dim}(Fusing the two — inet_diag baseline + eBPF events — is the next stage's job.)${rst}"
+  else
+    echo "    saw ${ROWS} flow row(s) straight from the kernel ring buffer."
+  fi
   echo
   echo "When you're done, remove the caps with:  ${dim}./scripts/try-ebpf.sh --undo${rst}"
 fi

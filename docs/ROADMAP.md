@@ -46,14 +46,17 @@ Cross-resource and visual-language work is threaded through, not bolted on at th
 > When enforcement lands (M6), `block`/`allow` return a JSON `Ruling` so an agent acts *and reads
 > back what it did*.
 
-## M2 — eBPF capture + attribution (privileged core)  ✅ (this session, except live-attach gated on setcap)
+## M2 — eBPF capture + attribution (privileged core)  ✅ (this session; eBPF attach verified 2026-06-18)
 - ✅ **eBPF source** on the TCP state machine (`tp_btf/inet_sock_set_state`, CO-RE) → BPF
-  ring buffer → Zig (libbpf via FFI). Closes the `?` rows by attributing in-kernel.
-  Built with `-Dbpf=true`; swapped behind the existing `Source`/`Observation` seam so the
-  `FlowTable` and frontends don't change. Compiles + links + the event decode is unit-tested;
-  the **live load/attach needs `setcap` (Ben runs it — root-only)**, with a loud, honest
-  fallback to inet_diag when caps are absent. *(Not yet runtime-verified end-to-end — the
-  agent sandbox can't hold CAP_BPF.)*
+  ring buffer → Zig (libbpf via FFI). Built with `-Dbpf=true`; swapped behind the existing
+  `Source`/`Observation` seam so the `FlowTable` and frontends don't change. **Verified: loads +
+  attaches under `setcap` on kernel 6.17** (`scripts/try-ebpf.sh`), with a loud, honest fallback
+  to inet_diag when caps are absent.
+  - ⚠️ **Known: eBPF is an event *augmenter*, not a standalone source.** The hook fires on TCP
+    state *transitions*, so it sees *new/short-lived* activity, not the *existing* socket table
+    (a `snapshot --bpf` shows 0 rows in an idle instant). The production design is **hybrid:
+    inet_diag for the baseline table + byte counters, eBPF for births/deaths/attribution, fused** —
+    the **top M3 capture task** (and eBPF carries no byte counters yet; bytes stay on inet_diag).
 - ✅ **Test discipline (critique §5.1/§5.2):** netlink mock + **golden-frame decode tests**
   (capture correctness asserted, not "validated by live runs"); the **in-process ↔ IPC parity
   property** landed *before* the socket went live; eBPF event decode tested root-free.
@@ -64,14 +67,20 @@ Cross-resource and visual-language work is threaded through, not bolted on at th
   `libcartograph`** (`service`/`exposure`, sshd/cups/resolved/nginx legible) — not a renderer
   detail (critique §5.3).
 
-## M3 — Enrichment + the risk/impact engine
+## M3 — Hybrid capture + enrichment + the risk/impact engine
+- **Hybrid capture fusion (first):** make the `.bpf` source = inet_diag (baseline table + byte
+  counters) **+** eBPF events (births/deaths/short-lived/attribution), fused — so eBPF *adds* to
+  the live table instead of replacing it. This is what makes `--bpf` actually show the `?` rows
+  closed in the normal view (M2 left it either/or).
 - Passive DNS + TLS SNI/QUIC; offline GeoIP/ASN MMDB; **nDPI** classification; service
   fingerprinting; the transparent **impact/confidence scoring** (DESIGN-LANGUAGE.md).
 - **`Greeting` lands here** (the persistence seam made type), after passing the type test;
   scoring emits **`Reading`s**. **Every M1 in-process test gains an IPC twin** so the parity
   claim survives the renderer swap (critique §5.2/§6).
+- **GTK (D21):** a minimal GTK4 window over the IPC socket ships *now* and grows with each of the
+  above — the visual surface is built incrementally, not deferred. See M4/FRONTENDS.md.
 
-## M4 — The two expressions + the design language
+## M4 — The two expressions + the design language  *(GTK now starts in M3, D21 — this milestone is where it matures)*
 - **Terminal** (libvaxis, kitty-graphics logos) **and GTK** (GTK4 + zig-gobject), both over
   `libcartograph`. The **orbit→region** zoom; colors/icons/**risk rings**; lens toggling
   & profiles. X11+Wayland native by construction.
