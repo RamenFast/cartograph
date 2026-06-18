@@ -85,11 +85,15 @@ comptime {
     std.debug.assert(@sizeOf(inet_diag_msg) == 72);
 }
 
-// Stable byte offsets into `struct tcp_info` (unchanged for many kernel versions).
+// Byte offsets into `struct tcp_info`. The struct only ever *grows* (fields are
+// appended across kernel versions, never reordered), and the kernel reports how
+// many bytes it actually wrote via the rtattr length. So we never assume a fixed
+// size — each field is read only if `adata.len` actually reaches it (see parseMsg).
+// That way an older/shorter tcp_info still yields RTT even if byte counters are
+// absent, and a future longer one can't make us read past the reported end.
 const TCPI_RTT_OFF = 68; // u32, microseconds
 const TCPI_BYTES_ACKED_OFF = 120; // u64
 const TCPI_BYTES_RECEIVED_OFF = 128; // u64
-const TCPI_MIN_LEN = TCPI_BYTES_RECEIVED_OFF + 8;
 
 /// One socket as reported by inet_diag.
 pub const SockRecord = struct {
@@ -231,10 +235,14 @@ fn parseMsg(
         const a: *align(1) const rtattr = @ptrCast(&payload[off]);
         if (a.len < @sizeOf(rtattr) or off + a.len > payload.len) break;
         const adata = payload[off + @sizeOf(rtattr) .. off + a.len];
-        if (a.type == INET_DIAG_INFO and adata.len >= TCPI_MIN_LEN) {
-            rec.rtt_us = std.mem.readInt(u32, adata[TCPI_RTT_OFF..][0..4], .little);
-            rec.tx_bytes = std.mem.readInt(u64, adata[TCPI_BYTES_ACKED_OFF..][0..8], .little);
-            rec.rx_bytes = std.mem.readInt(u64, adata[TCPI_BYTES_RECEIVED_OFF..][0..8], .little);
+        if (a.type == INET_DIAG_INFO) {
+            // Per-field bounds: only decode what the kernel actually reported.
+            if (adata.len >= TCPI_RTT_OFF + 4)
+                rec.rtt_us = std.mem.readInt(u32, adata[TCPI_RTT_OFF..][0..4], .little);
+            if (adata.len >= TCPI_BYTES_ACKED_OFF + 8)
+                rec.tx_bytes = std.mem.readInt(u64, adata[TCPI_BYTES_ACKED_OFF..][0..8], .little);
+            if (adata.len >= TCPI_BYTES_RECEIVED_OFF + 8)
+                rec.rx_bytes = std.mem.readInt(u64, adata[TCPI_BYTES_RECEIVED_OFF..][0..8], .little);
         }
         off += rtaAlign(a.len);
     }

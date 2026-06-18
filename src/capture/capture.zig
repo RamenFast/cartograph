@@ -43,6 +43,11 @@ pub const Capturer = struct {
     /// Run one capture cycle: refresh the socket list + attribution, fold into
     /// `table`. Caller drives `beginCycle`/`collectClosed` around this if it wants
     /// closed-flow detection (snapshot mode doesn't need it).
+    ///
+    /// NOTE: this re-scans every process's fds and re-dumps inet_diag each tick —
+    /// O(procs × fds). That polling cost is *intentional* pre-eBPF. M2 replaces it
+    /// with a kernel ring buffer (events, not polls); do NOT add an inode/attr cache
+    /// here to "fix" the cost — eBPF obsoletes it and a cache would just rot. See M2.
     pub fn refresh(self: *Capturer, table: *FlowTable, now_ms: i64) !void {
         try proc.buildInodeMap(self.io, &self.inodes);
 
