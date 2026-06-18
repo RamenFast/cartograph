@@ -77,6 +77,39 @@ Fast, honest, and quiet. It should make a curious person say *"oh — so THAT's 
 laptop is doing"* within ten seconds of opening it, then reward them all the way down to
 the byte when they want it. Beauty in service of truth, not decoration.
 
+### The deeper why — consistency, and the wiring diagram in the fridge
+
+Honest danger only *teaches* when it's **consistent and standardized**. The black-and-red
+skull on the back of the microwave taught a generation what it meant precisely *because it
+meant the same thing everywhere* — a hazard-literacy you learn once and trust always. That is
+what the design language is (DECISIONS D14): not decoration, a **standard** — fixed colors,
+fixed glyphs, fixed meanings — a truth-language readable on first sight and identical on every
+surface and every version. The skull on the microwave is the ancestor of the risk ring; the
+stable NDJSON schema (D18) is the same promise to machines. *Consistency is what makes truth
+teachable.*
+
+A standard can be a **door** or a **club.** The hazard symbol, the wiring diagram printed
+inside the panel, AOSP-when-it-was-actually-open — doors: shared literacy that *includes* and
+*teaches*. The bootloader locked "for your safety," the SDK you must adopt, "call a certified
+technician" — clubs: barriers that *gatekeep*. Cartograph builds doors. It ships its **own
+wiring diagram** — decomposable scores ("Impact 78 = plaintext +30 · upload +20 · …"),
+`--schema`, real man pages, open NDJSON, nothing to join — so the machine teaches you how to
+read it instead of hiding behind a priesthood.
+
+Danger, when it's real, is handled like the **Android recovery screen**: named in plain ASCII,
+made *deliberately* hard to trigger (the physical-button friction), and always **recoverable**
+— a bootloop you can un-loop. Enforcement (M6) inherits exactly this: block is honest,
+high-friction, visible, and undoable. Reversible-but-real danger is how anyone learned anything;
+the people who respect it become the ones who *un-brick* the device for someone else.
+
+**The mission under the mission:** re-democratize technical literacy. *"Certified professional"*
+shouldn't mean a gatekept credential — it should mean **the wiring diagram came with the fridge
+and you were curious enough to read it.** Cartograph ships your machine's wiring diagram (the
+network half) — included, consistent, legible — so competence is *available to anyone who looks*,
+not licensed to a few. AOSP was supposed to be this; it was open enough to matter in an antitrust
+court and then hollowed out in practice until it's open in name and closed in fact. This is one
+small brick laid back the other way.
+
 ## Scope notes
 - **Active blocking/firewalling is in scope** (you asked for it): observe-first, then
   per-app / host / flow **allow · block · throttle** via XDP — Little-Snitch-on-Linux, but

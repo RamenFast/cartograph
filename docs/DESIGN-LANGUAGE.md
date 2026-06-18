@@ -5,6 +5,11 @@ and how much should I care?* — while staying **fully capable** underneath. The
 **nothing is ever just decorative.** Every color, glyph, ring, and badge encodes data, and
 every encoding is one click/keypress away from the raw truth behind it.
 
+> **Why fixed meanings?** Because a standard you learn once and trust everywhere is what makes
+> truth *teachable* — the black-and-red skull on the back of the microwave. Consistency is the
+> point, not the constraint. See VISION.md → "the deeper why — consistency, and the wiring
+> diagram in the fridge."
+
 ## 1. Color = meaning (fixed, learnable, accessible)
 
 A small fixed palette. A color never means two things; meaning never relies on color
