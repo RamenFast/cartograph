@@ -1,0 +1,106 @@
+# Cartograph — Decisions (ADR-style)
+
+Locked choices with rationale. Each can be revisited, but the default is to honor these.
+
+## D1 — Language: Zig (core) + Elixir/Phoenix LiveView (UI)
+Esoteric *and* optimal. The app is a zero-GC privileged hot path (Zig) + a soft-real-time
+many-entity live UI (BEAM). Each language on home turf; the privilege boundary maps onto
+the language boundary. Full analysis in STACK.md §4.
+- **Single-language fallbacks** if the polyglot seam proves annoying: Zig-everywhere
+  (hand-rolled ImGui UI) or Elixir-everywhere (+ a small Zig capture NIF). Not chosen now.
+
+## D2 — Capture: eBPF/XDP, tiered; libpcap only for deep-capture export
+eBPF gives in-kernel counting + reliable per-PID attribution at near-zero overhead and is
+how modern live monitors work. Tiering (T0 always-on cheap / T2 deep on-demand) is what
+makes Cartograph both a featherweight monitor and a deep analyzer. libpcap/AF_PACKET is
+used only for the on-demand full-payload tap + `.pcap` export (Wireshark interop). We do
+**not** build on Wireshark's engine — we interop with `tshark` for the protocol long tail.
+
+## D3 — Kernel recompile: NOT required  ⟵ (answers your question directly)
+You offered to recompile for better features "if no perf cost." **Don't — it buys us
+nothing here and costs portability.** Verified on this machine:
+- `/sys/kernel/btf/vmlinux` is present (6.9 MB) → **CO-RE works**, so eBPF programs are
+  portable and need no per-kernel recompiles.
+- Kernel **6.17** already enables every feature we use: BPF ring buffer, kprobes/tracepoints,
+  fentry/fexit, XDP, BPF CO-RE, `CAP_BPF`/`CAP_PERFMON`. Stock Ubuntu/Mint configs ship
+  these on.
+- A custom kernel would mean Cartograph only runs on *your* kernel, defeating the goal of
+  a portable single binary, and adds maintenance with **zero capability gain**.
+- The only thing worth a tweak is *runtime*, not a rebuild: prefer file **capabilities**
+  (`setcap`) over root; optionally `sysctl kernel.unprivileged_bpf_disabled` stays as-is
+  (we use caps, not unprivileged BPF). Revisit a custom kernel only if we ever chase
+  exotic XDP offload — not on the roadmap.
+
+## D4 — No Python / no scripting glue in the product; lean binary IPC
+Per your steer. The product is native end-to-end. Surveyor↔atlas uses a length-prefixed
+binary frame protocol over a Unix socket (packed structs/CBOR), decoded by BEAM's native
+binary pattern-matching — no JSON/HTTP tax on the hot event stream. (Any Python you saw
+was one-off bootstrap to parse Zig's release JSON; it is not part of Cartograph.)
+
+## D5 — GeoIP/ASN data: offline, redistributable MMDB
+Prefer an open-licensed, daily-updated source (IPLocate / DB-IP / IPinfo Lite) over
+MaxMind GeoLite2 (lower quality, license signup). Bundled/downloaded once, queried
+offline — no per-connection network calls. (STACK.md §2, sources.)
+
+## D6 — Privilege model: split daemon + capabilities, never root UI
+`surveyor` gets `cap_bpf,cap_perfmon,cap_net_raw,cap_net_admin+ep`; `atlas` runs as the
+user. Limits blast radius and keeps the GUI unprivileged.
+
+## D7 — Explanations: local-first LLM (ollama already installed), cloud opt-in
+The "Why / explain this flow" feature uses the on-box `ollama` model by default → offline,
+private, no traffic leak. A cloud model (e.g. Claude API) is strictly opt-in later.
+
+## D8 — Names (working): product **Cartograph**; components **surveyor** + **atlas**
+Cartography theme encodes the hero UX (a living, zoomable map). Components are
+self-describing (surveyor measures the terrain = captures; atlas is the map). All
+provisional — rename freely.
+
+## D9 — Frontends: dual native (Terminal + GTK) over one Zig view-model
+You want a terminal expression AND a GTK expression with identical capability. All logic
+lives in **`libcartograph`** (Zig); each UI is a thin renderer → **parity by construction**.
+Terminal = libvaxis (kitty-graphics logos); GTK = GTK4 via zig-gobject, GPU-accelerated,
+X11+Wayland native. **Elixir/LiveView is demoted to an optional remote view** (supersedes
+the Elixir-primary half of D1). See FRONTENDS.md.
+
+## D10 — GTK binding: zig-gobject (Vala fallback)
+zig-gobject keeps the GTK app Zig-native and links libcartograph with no glue (proven by
+Ghostty). If ergonomics bite, **Vala** (GTK-native, compiles to C, FFIs the Zig core over
+the C ABI) is the elegant fallback — swappable without touching the core. Spike early in M4.
+
+## D11 — Active blocking is in scope (XDP), observe-first
+Per "definitely want both": allow/block/throttle by app/host/flow via XDP; rules are
+visible, undoable map objects; explicit + `--dry-run` gated; needs `cap_net_admin`. (M6)
+
+## D12 — X11 + Wayland from day one
+GTK4 is natively both; avoid Xlib; overlays via wlr-layer-shell + XDG portals behind one
+runtime-selected trait keyed off `XDG_SESSION_TYPE`. Wayland = a config change, not a port.
+
+## D13 — GPU: GTK/GSK + Vulkan canvas render · RADV compute · telemetry now · no ROCm
+Use the Radeon for rendering (GSK Vulkan free; custom Vulkan canvas for the big map),
+compute graph layout (Vulkan/RADV, CPU fallback first), and telemetry (proven). ROCm not
+required. All GPU use opt-in/auto-detected with CPU fallback. See GPU.md.
+
+## D14 — Visual semantics are data, never decoration
+Fixed color meanings + glyphs + dual **confidence/impact rings**; every score decomposable
+and explainable; colorblind-safe (never color alone). See DESIGN-LANGUAGE.md.
+
+## D15 — "Bloom" CLI/UX: verbs not flags, zero-friction start, real man pages
+No required flags; verbs read like intent; progressive disclosure; ship genuine man pages
+(`cartograph(1)` drafted, renders clean). See CLI.md.
+
+---
+
+<a id="install"></a>
+## D-install — package status & what's left
+**You already installed the heavy stack** (confirmed present 2026-06-17): clang 18, llvm 18,
+libbpf-dev, libpcap-dev, libcap2-bin, libndpi-dev, libelf-dev, bpftrace, tshark/dumpcap,
+**Elixir/Erlang OTP 27**. That unlocks M2 (eBPF), M3 (nDPI), M5 (pcap/tshark), and the
+optional remote view.
+
+**Remaining — only the GTK frontend stack (for M4):**
+```bash
+sudo apt install libgtk-4-dev libadwaita-1-dev gobject-introspection libgirepository1.0-dev
+sudo apt install radeontop   # optional: GPU telemetry cross-check
+```
+`libvaxis` and `zig-gobject` are **Zig packages fetched by the build**, not apt. Note: apt
+is not passwordless in the agent sandbox, so these must be run by you.

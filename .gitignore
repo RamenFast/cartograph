@@ -1,0 +1,17 @@
+# vendored toolchain (53 MB) — re-fetch with the bootstrap step, don't commit
+/toolchain/
+
+# Zig build artifacts
+.zig-cache/
+zig-cache/
+zig-out/
+
+# Elixir / Erlang (atlas)
+/atlas/_build/
+/atlas/deps/
+/atlas/*.beam
+erl_crash.dump
+
+# data / caches pulled at runtime
+*.mmdb
+/assets/logo-cache/
