@@ -10,6 +10,7 @@
 const std = @import("std");
 const cartograph = @import("cartograph");
 const capture = @import("capture");
+const bpf = @import("bpf"); // real loader with -Dbpf, else a stub that reports unavailable
 
 const ipc = cartograph.ipc;
 
@@ -31,25 +32,82 @@ pub fn main(init: std.process.Init) !void {
 
     // Simple, agent-legible flag scan (order-independent). See docs/AGENT-INTERFACE.md.
     var as_json = false;
+    var want_bpf = false;
     var sock_path: ?[]const u8 = null;
     while (args.next()) |a| {
         if (std.mem.eql(u8, a, "--json")) {
             as_json = true;
+        } else if (std.mem.eql(u8, a, "--bpf")) {
+            want_bpf = true;
         } else if (std.mem.eql(u8, a, "--socket")) {
             sock_path = args.next();
         }
     }
 
     if (std.mem.eql(u8, cmd, "serve")) {
-        if (sock_path) |p| try serveSocket(gpa, io, p) else try serve(gpa, io);
+        if (sock_path) |p| try serveSocket(gpa, io, p, want_bpf) else try serve(gpa, io, want_bpf);
     } else if (std.mem.eql(u8, cmd, "snapshot")) {
-        try snapshot(gpa, io, as_json);
+        try snapshot(gpa, io, as_json, want_bpf);
     } else if (std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "help")) {
         try usage(io);
     } else {
         try usage(io);
         return error.UnknownCommand;
     }
+}
+
+/// The capture source behind the Observation seam: unprivileged inet_diag, or the
+/// eBPF program (when built with -Dbpf and the process holds the caps). Neither the
+/// FlowTable nor any frontend sees which — that is the point of the seam.
+const Source = union(enum) {
+    diag: capture.Capturer,
+    bpf: bpf.BpfCapturer,
+
+    fn deinit(self: *Source) void {
+        switch (self.*) {
+            inline else => |*s| s.deinit(),
+        }
+    }
+
+    /// One capture tick: fold the current observations into `table`, and collect the
+    /// keys of flows that died. diag rescans + sweeps; bpf drains kernel events.
+    fn tick(self: *Source, table: *cartograph.FlowTable, now: i64, closed: *std.ArrayList(cartograph.FlowKey)) !void {
+        switch (self.*) {
+            .diag => |*c| {
+                table.beginCycle();
+                try c.refresh(table, now);
+                try table.collectClosed(closed);
+            },
+            .bpf => |*c| try c.refresh(table, now, closed),
+        }
+    }
+};
+
+/// Choose the source: eBPF if asked for *and* it actually loads (caps present), else
+/// the inet_diag fallback. The fallback is loud about *why* — never a silent downgrade.
+fn openSource(gpa: std.mem.Allocator, io: std.Io, want_bpf: bool) !Source {
+    if (want_bpf) {
+        if (bpf.BpfCapturer.init(gpa)) |b| {
+            return .{ .bpf = b };
+        } else |err| {
+            warnBpfFallback(io, err);
+        }
+    }
+    return .{ .diag = try capture.Capturer.init(gpa, io) };
+}
+
+fn warnBpfFallback(io: std.Io, err: anyerror) void {
+    var buf: [256]u8 = undefined;
+    var fw = std.Io.File.stderr().writer(io, &buf);
+    const w = &fw.interface;
+    const hint = if (!bpf.built)
+        "built without -Dbpf"
+    else switch (err) {
+        error.BpfLoad, error.BpfAttach => "needs caps — setcap cap_bpf,cap_perfmon,cap_net_admin,cap_net_raw+ep surveyor",
+        else => "see ARCHITECTURE.md",
+    };
+    w.print("{s}note:{s} eBPF source unavailable ({s}: {s}); using unprivileged inet_diag.\n", .{ DIM, RST, @errorName(err), hint }) catch return;
+    w.flush() catch {};
 }
 
 fn usage(io: std.Io) !void {
@@ -79,14 +137,15 @@ fn ignoreSigpipe() void {
 
 /// One-shot, human-readable table — the promoted spike, now tcp6/udp + bytes + RTT.
 /// `as_json` emits NDJSON instead: the agent/script surface (`snapshot --json | jq`).
-fn snapshot(gpa: std.mem.Allocator, io: std.Io, as_json: bool) !void {
-    var cap = try capture.Capturer.init(gpa, io);
-    defer cap.deinit();
+fn snapshot(gpa: std.mem.Allocator, io: std.Io, as_json: bool, want_bpf: bool) !void {
+    var src = try openSource(gpa, io, want_bpf);
+    defer src.deinit();
     var table = cartograph.FlowTable.init(gpa);
     defer table.deinit();
 
-    table.beginCycle();
-    try cap.refresh(&table, capture.nowMs(io));
+    var closed: std.ArrayList(cartograph.FlowKey) = .empty;
+    defer closed.deinit(gpa);
+    try src.tick(&table, capture.nowMs(io), &closed);
 
     const flows = try table.snapshot(gpa);
     defer gpa.free(flows);
@@ -158,9 +217,9 @@ fn remoteStr(f: *cartograph.Flow, buf: []u8) []const u8 {
 /// errors (the consumer hung up) or capture fails. Transport-agnostic by construction:
 /// `w` is a pipe (stdout) or an accepted Unix socket — the frames are byte-identical,
 /// so a frontend renders the same view-model either way (parity, proven in tests).
-fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer) !void {
-    var cap = try capture.Capturer.init(gpa, io);
-    defer cap.deinit();
+fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, want_bpf: bool) !void {
+    var src = try openSource(gpa, io, want_bpf);
+    defer src.deinit();
     var table = cartograph.FlowTable.init(gpa);
     defer table.deinit();
 
@@ -172,15 +231,12 @@ fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer) !void {
 
     while (true) {
         const now = capture.nowMs(io);
-        table.beginCycle();
-        try cap.refresh(&table, now);
+        closed.clearRetainingCapacity();
+        try src.tick(&table, now, &closed);
 
         const flows = try table.snapshot(gpa);
         defer gpa.free(flows);
         for (flows) |f| try ipc.sendFlowUpsert(w, f.*);
-
-        closed.clearRetainingCapacity();
-        try table.collectClosed(&closed);
         for (closed.items) |k| try ipc.sendFlowClosed(w, k);
 
         try ipc.sendTick(w, now);
@@ -191,16 +247,16 @@ fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer) !void {
 }
 
 /// `surveyor serve` — frames to stdout: the pipe path, `surveyor serve | cartograph --ipc`.
-fn serve(gpa: std.mem.Allocator, io: std.Io) !void {
+fn serve(gpa: std.mem.Allocator, io: std.Io, want_bpf: bool) !void {
     var buf: [256 * 1024]u8 = undefined;
     var fw = std.Io.File.stdout().writer(io, &buf);
-    try streamLoop(gpa, io, &fw.interface);
+    try streamLoop(gpa, io, &fw.interface, want_bpf);
 }
 
 /// `surveyor serve --socket <path>` — the real privilege boundary. Bind a Unix socket
 /// and serve each connecting (unprivileged) frontend the same frames. `setcap` raises
 /// *this* process's capabilities (M2 eBPF); the frontend across the socket never does.
-fn serveSocket(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !void {
+fn serveSocket(gpa: std.mem.Allocator, io: std.Io, path: []const u8, want_bpf: bool) !void {
     const lfd = try cartograph.usock.listen(path);
     defer cartograph.usock.close(lfd);
 
@@ -216,6 +272,6 @@ fn serveSocket(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !void {
         var cf: std.Io.File = .{ .handle = cfd, .flags = .{ .nonblocking = false } };
         var fw = cf.writer(io, &buf);
         // A client that hangs up surfaces as a write error here; just wait for the next.
-        streamLoop(gpa, io, &fw.interface) catch {};
+        streamLoop(gpa, io, &fw.interface, want_bpf) catch {};
     }
 }

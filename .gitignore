@@ -16,6 +16,10 @@ erl_crash.dump
 *.mmdb
 /assets/logo-cache/
 
+# generated at build by the eBPF step (-Dbpf): kernel BTF header + compiled CO-RE object
+vmlinux.h
+*.bpf.o
+
 # collaborator local scratch (Nexus/hermes working artifacts) — kept on disk, not committed.
 # Durable, project-relevant outputs belong in docs/ instead. See docs/STRUCTURE.md.
 /.dextroesoteric/

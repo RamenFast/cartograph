@@ -46,17 +46,23 @@ Cross-resource and visual-language work is threaded through, not bolted on at th
 > When enforcement lands (M6), `block`/`allow` return a JSON `Ruling` so an agent acts *and reads
 > back what it did*.
 
-## M2 — eBPF capture + attribution (privileged core)
-- eBPF on tcp_connect / sock_state / exec (Zig→BPF or libbpf via FFI); BPF ring buffer →
-  Zig. Closes the `?` rows (root/other-user, short-lived). `setcap`, no full root.
-- **Test discipline (critique §5.1/§5.2):** a **netlink mock** + **golden-frame decode test**
-  so capture correctness is asserted, not "validated by live runs"; and an **in-process ↔
-  Unix-socket parity test** (identical `Flow` for identical input) *before* the privilege
-  boundary goes live, or parity fractures silently.
-- **Design the act ontology + reserve IPC frames** (ONTOLOGY.md); commit to the **persistence
-  & privacy contract** (STATE.md). **Unattributed-`?`-flow handling is a first-class design
-  question answered in `libcartograph`** (sshd/cups/resolved/nginx are the security-relevant
-  ones) — not a renderer detail (critique §5.3).
+## M2 — eBPF capture + attribution (privileged core)  ✅ (this session, except live-attach gated on setcap)
+- ✅ **eBPF source** on the TCP state machine (`tp_btf/inet_sock_set_state`, CO-RE) → BPF
+  ring buffer → Zig (libbpf via FFI). Closes the `?` rows by attributing in-kernel.
+  Built with `-Dbpf=true`; swapped behind the existing `Source`/`Observation` seam so the
+  `FlowTable` and frontends don't change. Compiles + links + the event decode is unit-tested;
+  the **live load/attach needs `setcap` (Ben runs it — root-only)**, with a loud, honest
+  fallback to inet_diag when caps are absent. *(Not yet runtime-verified end-to-end — the
+  agent sandbox can't hold CAP_BPF.)*
+- ✅ **Test discipline (critique §5.1/§5.2):** netlink mock + **golden-frame decode tests**
+  (capture correctness asserted, not "validated by live runs"); the **in-process ↔ IPC parity
+  property** landed *before* the socket went live; eBPF event decode tested root-free.
+- ✅ **Privilege boundary stood up:** surveyor serves over a **Unix socket** (`serve --socket`),
+  the unprivileged frontend connects (`--ipc --socket`) — same codec, proven byte-identical.
+- ✅ **Act ontology + reserved IPC frames** (ONTOLOGY.md, D19); **persistence & privacy
+  contract** committed (STATE.md, D20). **Unattributed-`?`-flow handling answered in
+  `libcartograph`** (`service`/`exposure`, sshd/cups/resolved/nginx legible) — not a renderer
+  detail (critique §5.3).
 
 ## M3 — Enrichment + the risk/impact engine
 - Passive DNS + TLS SNI/QUIC; offline GeoIP/ASN MMDB; **nDPI** classification; service

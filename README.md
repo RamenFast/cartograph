@@ -89,13 +89,23 @@ stream. See **[docs/EXPERIMENTS.md](docs/EXPERIMENTS.md)**.
 ```bash
 # Zig 0.16 is vendored in toolchain/ (no system install needed)
 ./toolchain/zig build                 # build surveyor + cartograph into zig-out/bin
-./toolchain/zig build test            # run the libcartograph unit tests
+./toolchain/zig build test            # run the unit tests (32 green)
 ./toolchain/zig build run             # the live TUI (in-process capture)
 
 # the architecture for real — capture core streams binary IPC to the frontend:
 ./zig-out/bin/surveyor serve | ./zig-out/bin/cartograph --ipc
 
+# …or over the real privilege boundary (a Unix socket, M2):
+./zig-out/bin/surveyor serve --socket /tmp/cg.sock &
+./zig-out/bin/cartograph --ipc --socket /tmp/cg.sock
+
 ./zig-out/bin/surveyor snapshot       # one-shot human-readable attributed table
+./zig-out/bin/surveyor snapshot --json | jq   # the agent/Unix surface (NDJSON)
+
+# eBPF capture (M2, opt-in: needs clang+bpftool to build, setcap to load):
+./toolchain/zig build -Dbpf=true      # adds the CO-RE source + 3 eBPF decode tests
+sudo setcap cap_bpf,cap_perfmon,cap_net_raw,cap_net_admin+ep ./zig-out/bin/surveyor
+./zig-out/bin/surveyor snapshot --bpf # falls back to inet_diag (loudly) without caps
 ```
 
 The TUI shows, per flow: the owning app + category glyph, the (IPv6-bracketed) endpoint,
