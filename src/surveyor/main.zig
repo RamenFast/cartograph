@@ -21,18 +21,27 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const gpa = init.gpa;
 
+    // Writing to a frontend that hung up must not kill the daemon: make EPIPE a normal
+    // write error we handle, not a process-terminating signal.
+    ignoreSigpipe();
+
     var args = std.process.Args.Iterator.init(init.minimal.args);
     _ = args.next(); // argv0
     const cmd = args.next() orelse "snapshot";
 
     // Simple, agent-legible flag scan (order-independent). See docs/AGENT-INTERFACE.md.
     var as_json = false;
+    var sock_path: ?[]const u8 = null;
     while (args.next()) |a| {
-        if (std.mem.eql(u8, a, "--json")) as_json = true;
+        if (std.mem.eql(u8, a, "--json")) {
+            as_json = true;
+        } else if (std.mem.eql(u8, a, "--socket")) {
+            sock_path = args.next();
+        }
     }
 
     if (std.mem.eql(u8, cmd, "serve")) {
-        try serve(gpa, io);
+        if (sock_path) |p| try serveSocket(gpa, io, p) else try serve(gpa, io);
     } else if (std.mem.eql(u8, cmd, "snapshot")) {
         try snapshot(gpa, io, as_json);
     } else if (std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "help")) {
@@ -51,11 +60,21 @@ fn usage(io: std.Io) !void {
         \\surveyor — cartograph capture core
         \\
         \\usage:
-        \\  surveyor snapshot     one-shot attributed flow table
-        \\  surveyor serve        stream live IPC frames to stdout
+        \\  surveyor snapshot [--json]      one-shot attributed flow table (NDJSON with --json)
+        \\  surveyor serve                  stream live IPC frames to stdout (pipe to a frontend)
+        \\  surveyor serve --socket <path>  serve frames over a Unix socket (the daemon boundary)
         \\
     );
     try w.flush();
+}
+
+fn ignoreSigpipe() void {
+    const act = std.posix.Sigaction{
+        .handler = .{ .handler = std.posix.SIG.IGN },
+        .mask = std.posix.sigemptyset(),
+        .flags = 0,
+    };
+    std.posix.sigaction(std.posix.SIG.PIPE, &act, null);
 }
 
 /// One-shot, human-readable table — the promoted spike, now tcp6/udp + bytes + RTT.
@@ -135,16 +154,15 @@ fn remoteStr(f: *cartograph.Flow, buf: []u8) []const u8 {
     return cartograph.endpoint(buf, f.key.remote, f.key.remote_port);
 }
 
-/// Stream the live view-model as binary IPC frames to stdout, forever.
-fn serve(gpa: std.mem.Allocator, io: std.Io) !void {
+/// The capture→emit loop, writing IPC frames to `w` forever. Returns when the writer
+/// errors (the consumer hung up) or capture fails. Transport-agnostic by construction:
+/// `w` is a pipe (stdout) or an accepted Unix socket — the frames are byte-identical,
+/// so a frontend renders the same view-model either way (parity, proven in tests).
+fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer) !void {
     var cap = try capture.Capturer.init(gpa, io);
     defer cap.deinit();
     var table = cartograph.FlowTable.init(gpa);
     defer table.deinit();
-
-    var buf: [256 * 1024]u8 = undefined;
-    var fw = std.Io.File.stdout().writer(io, &buf);
-    const w = &fw.interface;
 
     try ipc.sendHello(w);
     try w.flush();
@@ -169,5 +187,35 @@ fn serve(gpa: std.mem.Allocator, io: std.Io) !void {
         try w.flush();
 
         try io.sleep(std.Io.Duration.fromMilliseconds(1000), .awake);
+    }
+}
+
+/// `surveyor serve` — frames to stdout: the pipe path, `surveyor serve | cartograph --ipc`.
+fn serve(gpa: std.mem.Allocator, io: std.Io) !void {
+    var buf: [256 * 1024]u8 = undefined;
+    var fw = std.Io.File.stdout().writer(io, &buf);
+    try streamLoop(gpa, io, &fw.interface);
+}
+
+/// `surveyor serve --socket <path>` — the real privilege boundary. Bind a Unix socket
+/// and serve each connecting (unprivileged) frontend the same frames. `setcap` raises
+/// *this* process's capabilities (M2 eBPF); the frontend across the socket never does.
+fn serveSocket(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !void {
+    const lfd = try cartograph.usock.listen(path);
+    defer cartograph.usock.close(lfd);
+
+    var ebuf: [256]u8 = undefined;
+    var ew = std.Io.File.stderr().writer(io, &ebuf);
+    try ew.interface.print("{s}surveyor{s} serving IPC on unix:{s}  —  connect: cartograph --ipc --socket {s}\n", .{ BOLD, RST, path, path });
+    try ew.interface.flush();
+
+    while (true) {
+        const cfd = cartograph.usock.accept(lfd) catch continue;
+        defer cartograph.usock.close(cfd);
+        var buf: [256 * 1024]u8 = undefined;
+        var cf: std.Io.File = .{ .handle = cfd, .flags = .{ .nonblocking = false } };
+        var fw = cf.writer(io, &buf);
+        // A client that hangs up surfaces as a write error here; just wait for the next.
+        streamLoop(gpa, io, &fw.interface) catch {};
     }
 }

@@ -4,12 +4,14 @@ Two components on opposite sides of a privilege boundary, talking over a lean lo
 socket. This is the OpenSnitch/Little-Snitch split and it matters: capture needs
 `CAP_BPF`/`CAP_NET_RAW`; the UI must never be privileged.
 
-> **Note (M1 reality):** the diagram below is the *target*. As of M1 the frontend is a
-> native-Zig **TUI** over `libcartograph`; the **GTK** expression lands in M4 and the
-> Elixir/LiveView remote view is an *optional* extra (D9), not the primary UI. Capture is
-> still **unprivileged** (inet_diag + /proc) and links in-process; the privilege boundary
-> and the Unix socket go live with **M2** (eBPF). The IPC frame format already exists and is
-> transport-agnostic (pipe today, socket then). See ROADMAP M1/M2.
+> **Note (M2 reality):** the diagram below is the *target*. The frontend is a native-Zig
+> **TUI** over `libcartograph`; the **GTK** expression lands in M4 and the Elixir/LiveView
+> remote view is an *optional* extra (D9), not the primary UI. **The Unix-socket boundary is
+> now live** (`surveyor serve --socket <path>` ⇄ `cartograph --ipc --socket <path>`) — the
+> same `ipc` codec over a real socket, proven byte-identical to the pipe in tests
+> (`usock.zig`). Capture is still **unprivileged** today (inet_diag + /proc); the remaining
+> half of the boundary is the **eBPF capture source** behind the `Capturer` seam, which is
+> what makes `setcap` load-bearing (see Privilege model below). See ROADMAP M1/M2.
 
 ```
 ┌──── frontends (UNPRIVILEGED) · render the same libcartograph view-model ──────────────────┐
@@ -93,9 +95,26 @@ socket. This is the OpenSnitch/Little-Snitch split and it matters: capture needs
 ## Privilege model
 - `surveyor` runs with file capabilities, **not** root:
   `setcap cap_bpf,cap_perfmon,cap_net_raw,cap_net_admin+ep surveyor`.
-- `atlas` runs as the normal user; it can only *ask* surveyor to do things.
+- the frontend runs as the normal user; it can only *ask* surveyor to do things.
 - Logo/favicon fetching is the only outbound traffic Cartograph itself generates — cached,
   rate-limited, opt-in, and clearly attributed in its own map (no hypocrisy).
+
+### How it runs today (M2 — the boundary is real, unprivileged so far)
+```bash
+# the daemon binds a Unix socket; the unprivileged frontend connects to it
+./zig-out/bin/surveyor serve --socket /run/user/$UID/cartograph.sock &
+./zig-out/bin/cartograph --ipc --socket /run/user/$UID/cartograph.sock
+```
+The socket boundary works **without privilege today** (inet_diag + /proc). It becomes the
+*privilege* boundary once the eBPF capture source lands: at that point surveyor needs caps,
+granted by file capabilities (Ben runs this — `setcap` requires root; apt/sudo are not
+passwordless in the agent sandbox):
+```bash
+sudo setcap cap_bpf,cap_perfmon,cap_net_raw,cap_net_admin+ep ./zig-out/bin/surveyor
+# verify the caps stuck, and that the daemon never runs as root:
+getcap ./zig-out/bin/surveyor      # → cap_bpf,cap_net_admin,cap_net_raw,cap_perfmon=ep
+```
+The frontend is **never** granted caps — that's the whole point of the split.
 
 ## Performance posture
 - Count in-kernel; surface aggregates. Never copy payloads in T0/T1.

@@ -27,16 +27,28 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
 
     var use_ipc = false;
+    var sock_path: ?[]const u8 = null;
     var args = std.process.Args.Iterator.init(init.minimal.args);
     _ = args.next();
     while (args.next()) |a| {
-        if (std.mem.eql(u8, a, "--ipc")) use_ipc = true;
+        if (std.mem.eql(u8, a, "--ipc")) {
+            use_ipc = true;
+        } else if (std.mem.eql(u8, a, "--socket")) {
+            use_ipc = true;
+            sock_path = args.next();
+        }
     }
 
     var app = try App.init(gpa, io);
     defer app.deinit();
 
-    if (use_ipc) try app.runIpc() else try app.runLocal();
+    if (use_ipc) {
+        // Frames arrive on stdin (the pipe) or a Unix socket (the daemon boundary) —
+        // same codec, same render() either way.
+        const ipc_fd = if (sock_path) |p| try cartograph.usock.connect(p) else std.Io.File.stdin().handle;
+        defer if (sock_path != null) cartograph.usock.close(ipc_fd);
+        try app.runIpc(ipc_fd);
+    } else try app.runLocal();
 }
 
 const App = struct {
@@ -132,12 +144,13 @@ const App = struct {
         }
     }
 
-    // ---- IPC consumer loop (frames from surveyor on stdin) ------------------
-    fn runIpc(self: *App) !void {
+    // ---- IPC consumer loop (frames from surveyor on `ipc_fd`) ---------------
+    // `ipc_fd` is stdin (pipe) or a connected Unix socket (daemon boundary).
+    fn runIpc(self: *App, ipc_fd: std.posix.fd_t) !void {
         try self.enterScreen();
         defer self.leaveScreen();
 
-        const stdin_fd = std.Io.File.stdin().handle;
+        const stdin_fd = ipc_fd;
         var acc: std.ArrayList(u8) = .empty;
         defer acc.deinit(self.gpa);
         var rbuf: [64 * 1024]u8 = undefined;
