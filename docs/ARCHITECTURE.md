@@ -4,11 +4,19 @@ Two components on opposite sides of a privilege boundary, talking over a lean lo
 socket. This is the OpenSnitch/Little-Snitch split and it matters: capture needs
 `CAP_BPF`/`CAP_NET_RAW`; the UI must never be privileged.
 
+> **Note (M1 reality):** the diagram below is the *target*. As of M1 the frontend is a
+> native-Zig **TUI** over `libcartograph`; the **GTK** expression lands in M4 and the
+> Elixir/LiveView remote view is an *optional* extra (D9), not the primary UI. Capture is
+> still **unprivileged** (inet_diag + /proc) and links in-process; the privilege boundary
+> and the Unix socket go live with **M2** (eBPF). The IPC frame format already exists and is
+> transport-agnostic (pipe today, socket then). See ROADMAP M1/M2.
+
 ```
-┌──────────────────────── atlas (UNPRIVILEGED · Elixir/Phoenix LiveView) ───────────────────┐
-│  semantic-zoom map (orbit→region→street→ground) · "Why" panel · filters · timeline         │
-│  each flow = an OTP process · LiveView pushes diffs to the browser · logos/icons           │
-└───────────────────────────────────▲────────────────────────────────────────────────────────┘
+┌──── frontends (UNPRIVILEGED) · render the same libcartograph view-model ──────────────────┐
+│  TUI (Zig+libvaxis later) · GTK4 (M4) · optional Elixir/LiveView remote view (D9)          │
+│  semantic-zoom map (orbit→region→street→ground) · "Why" panel · filters · timeline · logos │
+└────────────────────────────────────▲─────────────────────────────────────────────────────┘
+                                     │  libcartograph (Zig view-model: flow/lens/scoring/identity)
                                      │  Unix domain socket: length-prefixed binary frames
                                      │  (event stream up · commands down) — no JSON, no HTTP
 ┌────────────────────────────────────┴──────────── surveyor (PRIVILEGED · Zig) ───────────────┐

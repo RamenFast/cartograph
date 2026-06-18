@@ -1,0 +1,95 @@
+# Cartograph — the act ontology (the vocabulary frame)
+
+> Origin: Nexus critique v3, §2 + §8 (2026-06-17), with a third-reviewer read via the mmx
+> CLI. **Adopted as the design frame for M2–M8.** The *categories* below are load-bearing;
+> the *specific type names* are provisional and ratify at each type's landing milestone —
+> only after passing the **type test** (below). This doc is the contract that keeps M3
+> (scoring), M6 (blocking), and M8 (narration) coherent instead of retrofitted three times.
+
+## The gap it closes
+
+The repo has a good **data vocabulary** — `Flow`, `FlowKey`, `Observation`, `Lens`,
+`Profile`, `Identity`, `Sparkline`. It has **no act vocabulary**: there is no type for the
+things the system *does on behalf of the user* (score a flow, remember an entity, block a
+host). The promise — *"your machine, over time, with consent, with a memory, with a face"* —
+needs nouns for memory and for action. Building them one-at-a-time means a fresh IPC frame,
+thread-safety story, and persistence story at M3, again at M6, again at M8. Designing the
+ontology once buys M3–M8 coherence for the cost of one afternoon.
+
+## Three categories (load-bearing) · four proposed types (provisional)
+
+| category | type (provisional) | one line | lands |
+|---|---|---|---|
+| **data** | `Greeting` | a remembered entity with a user label + verdict-state | M3 |
+| **state** | `Rule` | a decision that *operates on* flows (allow/block/throttle), visible+undoable (D14) | M6 |
+| **act** | `Reading` | a rendered impact/confidence **score** (an observation) | M8 |
+| **act** | `Ruling` | the **firing of a Rule** against a flow (an act) | M8 |
+
+The split that matters most (third-reviewer's sharpest finding): **`Reading` ≠ `Ruling`.**
+A score is an *estimate the system shows*; a rule firing is an *action the system took*.
+Giving both the name "Verdict" invites the "did it *show* this or *do* something?" ambiguity
+that would corrode the design language's clarity promise. Keep "Verdict" only as an informal
+category word, never as a single type.
+
+### Proposed shapes (sketches, not final)
+```zig
+// data — survives a reboot; the persistence seam made type (see STATE.md)
+const Greeting = struct {
+    key: EntityKey,                         // host / app / ASN
+    label: Str(64),                         // user-assigned, optional
+    state: enum { unseen, greeted, ignored }, // .ignored is VISIBLE (D14), not hidden
+    first_seen_at_ms: i64, last_seen_at_ms: i64, greeted_at_ms: i64,
+    user_note: Str(256),
+};
+// state — operates on flows; never invisible (D14)
+const Rule = struct {
+    id: RuleId, verdict: enum { allow, block, throttle }, scope: enum { app, host, flow, asn, country },
+    target: Selector, rate: ?Rate, created_at_ms: i64, expires_at_ms: ?i64,
+    source: enum { user, postcard, lens_default, onboarding }, visible: bool = true,
+};
+// act (observation) — emitted whenever a flow gets a new score
+const Reading = struct { at_ms: i64, flow_key: FlowKey, impact: u8, confidence: u8, reasons: []Reason, lens_stack: LensSet };
+// act (action) — emitted whenever a Rule fires; renderer shows the severed link (D14)
+const Ruling  = struct { at_ms: i64, flow_key: FlowKey, rule_id: RuleId, verdict: Rule.verdict, effect: enum { none, blocked, throttled, allowed } };
+```
+
+## The type test (do this before shipping each type)
+
+The third-reviewer's caveat, kept as a gate: **a proposed type earns its existence only if it
+carries state the existing types cannot represent.** Concretely, before adding `Greeting`:
+show it holds state (`label`, verdict, staleness, trust) that `Identity` *can't*. If it reads
+as "just `Identity + label`," fold it into `Identity` and move on. Same gate for the others.
+*Test the type before you ship it.* Names are negotiable; the categories are not.
+
+## IPC frame reservations (design now, code at the landing milestone)
+
+`ipc.zig`'s `FrameType` is intentionally **non-exhaustive** (`_`), so adding variants later is
+non-breaking and forward-readers already skip unknown frames. Reserve these names so the wire
+protocol grows additively and a renderer never needs a private state cache:
+
+- `user_state` — **the load-bearing one for parity.** Profile switches, lens toggles, and
+  `Greeting` writes (name / ignore / block). Without it, a GTK frontend forks its own
+  user-state cache and parity fractures *silently* at the user-state layer (critique §5).
+  This one must exist **before the M4 GTK spike**, not after.
+- `rule` — Rule create/update/delete; bidirectional.
+- `reading` — a new `Reading` (observation only).
+- `ruling` — a new `Ruling` (act; renderer shows the severed link, D14).
+
+Cost when we land them: four enum variants + round-trip tests in `ipc.zig`.
+
+## Landing plan
+- **M2/M3:** define the four types with thin/empty implementations + reserve the IPC frames +
+  add the fixture shape to the test corpus. `Greeting` gets a real implementation at M3
+  (scoring), backed by the persistence contract in [STATE.md](STATE.md).
+- **M6:** `Rule` implementation (XDP allow/block/throttle); `.ignored` visual + Rule visuals
+  are designed *together* here (not a M7 afterthought).
+- **M8:** `Reading` + `Ruling` implementations drive the "Why" narrative + the postcard.
+
+## Open questions for ratification (Ben + Nexus)
+1. Names: `Greeting / Rule / Reading / Ruling` — keep, or rename? (Categories stay.)
+2. Does `Greeting` survive the type test vs `Identity`, or fold in?
+3. `EntityKey` granularity: host vs app vs ASN — one key type or a tagged union?
+4. Is `Reading` emitted on *every* rescore (chatty) or only on threshold-cross? (IPC volume.)
+
+*Downstream use cases (postcard, greeting ritual, seasonal passage, the "Why" LLM contract)
+hang off these types — see the critique §3/§4 and [STATE.md](STATE.md).*

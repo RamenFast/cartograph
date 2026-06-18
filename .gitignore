@@ -15,3 +15,7 @@ erl_crash.dump
 # data / caches pulled at runtime
 *.mmdb
 /assets/logo-cache/
+
+# collaborator local scratch (Nexus/hermes working artifacts) — kept on disk, not committed.
+# Durable, project-relevant outputs belong in docs/ instead. See docs/STRUCTURE.md.
+/.dextroesoteric/

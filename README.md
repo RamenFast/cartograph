@@ -6,7 +6,8 @@
 > app's icon, the remote service's logo) and a continuous zoom from "who is my machine
 > talking to right now" all the way down to raw packet bytes.
 
-*Working title — see [docs/DECISIONS.md](docs/DECISIONS.md). Status: **pre-alpha / foundation**.*
+*Working title — see [docs/DECISIONS.md](docs/DECISIONS.md). Status: **M1 shipped** — working
+unprivileged capture core + live TUI; M2 (eBPF) next. New here? Read [docs/NEXT-SESSION.md](docs/NEXT-SESSION.md).*
 
 ---
 
@@ -137,10 +138,15 @@ cartograph/
     ├── CLI.md             ← the "Bloom" CLI/UX philosophy + flags + man pages
     ├── GPU.md             ← AMD Radeon: render · Vulkan compute · telemetry
     ├── STACK.md           ← Wireshark verdict, real-time, esoteric-language analysis
-    ├── PLANNING.md        ← original environment survey + candidate architecture
     ├── ROADMAP.md         ← the journey: milestones M0→M9
     ├── DECISIONS.md       ← locked decisions (incl. "do we recompile the kernel?")
-    └── EXPERIMENTS.md     ← what was tested + results
+    ├── ONTOLOGY.md        ← the act ontology (Greeting/Rule/Reading/Ruling) — the frame
+    ├── STATE.md           ← persistence + privacy contract; the `?`-flow design question
+    ├── TOOLCHAIN.md       ← Zig 0.16 churn notes + freeze/longevity plan
+    ├── STRUCTURE.md       ← project layout + collaboration conventions
+    ├── NEXT-SESSION.md    ← handoff: where we are, what's next (start here)
+    ├── EXPERIMENTS.md     ← what was tested + results
+    └── PLANNING.md        ← historical deliberation (working-title "netscope")
 ```
 
 ## Install status — you already installed the heavy stack ✅

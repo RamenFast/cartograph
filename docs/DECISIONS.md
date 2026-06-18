@@ -2,12 +2,18 @@
 
 Locked choices with rationale. Each can be revisited, but the default is to honor these.
 
-## D1 — Language: Zig (core) + Elixir/Phoenix LiveView (UI)
+## D1 — Language: Zig (core) + Zig frontends — *(UI half SUPERSEDED by D9)*
+> **Superseded (UI):** D9 makes the **frontends Zig** (TUI + GTK over `libcartograph`) and
+> demotes Elixir/Phoenix LiveView to an **optional remote view**. Read D1 for the *core*
+> decision (Zig on the hot path); read **D9** for the frontend decision. M1 shipped the
+> Zig view-model + a native Zig TUI; no Elixir is in the build.
+
 Esoteric *and* optimal. The app is a zero-GC privileged hot path (Zig) + a soft-real-time
-many-entity live UI (BEAM). Each language on home turf; the privilege boundary maps onto
-the language boundary. Full analysis in STACK.md §4.
-- **Single-language fallbacks** if the polyglot seam proves annoying: Zig-everywhere
-  (hand-rolled ImGui UI) or Elixir-everywhere (+ a small Zig capture NIF). Not chosen now.
+many-entity live UI. The privilege boundary maps onto a clean producer/consumer seam.
+Full analysis in STACK.md §4.
+- **Single-language fallback** chosen in practice: **Zig everywhere** (the view-model lives
+  in `libcartograph`; each frontend is a thin Zig renderer). Elixir-everywhere (+ a Zig
+  capture NIF) remains a theoretical alt; not chosen.
 
 ## D2 — Capture: eBPF/XDP, tiered; libpcap only for deep-capture export
 eBPF gives in-kernel counting + reliable per-PID attribution at near-zero overhead and is
@@ -87,6 +93,21 @@ and explainable; colorblind-safe (never color alone). See DESIGN-LANGUAGE.md.
 ## D15 — "Bloom" CLI/UX: verbs not flags, zero-friction start, real man pages
 No required flags; verbs read like intent; progressive disclosure; ship genuine man pages
 (`cartograph(1)` drafted, renders clean). See CLI.md.
+
+## D16 — Toolchain: freeze on vendored Zig 0.16.0; follow the stable channel
+We are on 0.16 ahead of the ecosystem. Pin `toolchain/zig` at the vendored 0.16.0; adopt 0.17+
+only when deps (libvaxis, zig-gobject) track it, on a deliberate branch, never mid-milestone.
+Patch upstream deps in-tree and record patches. Living on 0.16 for a year is acceptable — the
+std surface we use is small. Full notes + the churn list: TOOLCHAIN.md. (Critique v3 §5.6.)
+
+## D17 — Adopt an act ontology as the design frame (types ratify per-milestone)
+Per Nexus critique v3 §2/§8: the repo has data-nouns but no **act-nouns**. We adopt a three-
+category frame — **data / state / act** — with provisional types `Greeting` (data, M3),
+`Rule` (state, M6), `Reading` + `Ruling` (act, M8). Categories are load-bearing; names are
+provisional and each type must pass the **type test** (carries state existing types can't)
+before it ships. IPC `FrameType` is non-exhaustive, so `user_state`/`rule`/`reading`/`ruling`
+frames are reserved now and added additively — `user_state` **before** the M4 GTK spike to
+prevent a silent parity fracture. See ONTOLOGY.md + STATE.md.
 
 ---
 

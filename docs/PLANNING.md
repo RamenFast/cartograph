@@ -1,4 +1,8 @@
-# netscope — planning (working title)
+# Cartograph — planning  *(historical · written under the working name "netscope")*
+
+> Kept as the deliberation record — what was considered and rejected. The project is now
+> **Cartograph**; "netscope" below is the old working title. Current decisions live in
+> DECISIONS.md (esp. D9 for frontends).
 
 > A Linux-first, eBPF-powered network traffic analyzer that answers, for every packet/flow:
 > **What is this? Who is it? Where is it going? Why was it sent — which process & why?**

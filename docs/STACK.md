@@ -1,4 +1,10 @@
-# netscope — power tools, real-time, and esoteric-language stack
+# Cartograph — power tools, real-time, and esoteric-language stack
+
+> **Historical analysis (read with D9 in mind).** This doc captured the early survey under
+> the working name *netscope*. Two conclusions were later superseded: the **UI** is now
+> **Zig** (TUI + GTK over `libcartograph`), not Elixir/LiveView (D9); and **real-time is
+> delivered by Zig + eBPF**, *not* by BEAM — see the §3 note. The capture/speed analysis
+> (eBPF/XDP + nDPI + tshark) and the Wireshark verdict still stand.
 
 Answers three questions raised during planning:
 1. Is Wireshark the right foundation? What's faster / more extensible for *our* use?
@@ -16,7 +22,7 @@ But it is the wrong *base* for what we're building, because:
 - It's a capture-then-analyze tool, not a streaming engine. Live capture at high packet
   rates bogs the UI; it's not designed for always-on, low-overhead monitoring.
 - **No process attribution** (which app sent this?), **no identity/logo layer**,
-  **no intent** — exactly the gap netscope exists to fill.
+  **no intent** — exactly the gap Cartograph exists to fill.
 - The engine is a large GPL monolith; you embed *into* Wireshark (C dissectors + Lua),
   you don't cleanly embed *it* into a new product.
 
@@ -50,13 +56,17 @@ Verdict: the "most powerful" stack for *us* is **eBPF/XDP for capture+attributio
 for on-demand deep dissection** — not building on Wireshark itself.
 
 ## 3. Is real-time achievable? — yes, decisively, on a desktop
+> **Update (post-D9):** real-time comes from **counting in-kernel (eBPF) + a Zig event
+> loop**, not from BEAM. The BEAM bullet below was written when Elixir was the primary UI;
+> it now applies only to the *optional* remote view. The "tiered, payload-free hot path"
+> argument is the load-bearing one and is unchanged.
 
 - eBPF does counting/aggregation **in-kernel** and streams compact events to userspace
   via ring buffers at microsecond latency with negligible CPU. This is exactly how
   live eBPF observability tools work today.
 - A single desktop's traffic — even a saturated gigabit link — is comfortably
   real-time on modern hardware *as long as you don't full-payload-capture-and-dissect
-  everything continuously* (Wireshark's model). That's precisely why netscope is
+  everything continuously* (Wireshark's model). That's precisely why Cartograph is
   **tiered**: Tier 0 always-on + cheap; Tier 2 deep capture only on the flow you click.
 - BEAM (Elixir) adds soft-real-time orchestration + push-to-UI (LiveView) that was
   built for exactly this kind of live, many-entity dashboard.
