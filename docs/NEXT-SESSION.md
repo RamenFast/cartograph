@@ -13,7 +13,10 @@
   are shared truth (surveyor-owned, persisted, broadcast — lands with `Greeting` at M3). Live in
   both frontends: GTK `p` cycles the profile, `1–6` toggle lenses, the layout reacts; TUI too.
   Verified three ways — wire bytes (hello→session→echo), unit tests (reconstruction/idempotence/
-  round-trip), and the live GTK window driving + rendering surveyor's echo.
+  round-trip), and the live GTK window driving + rendering surveyor's echo. Also landed
+  **`ipc.FrameStream`**: the length-prefixed read-side reassembly was hand-rolled in three
+  consumers (TUI/GTK/surveyor); it now has one owner in `ipc.zig` (the write side already did),
+  with an oversized-frame guard. `zig build test` = **41 green**, `-Dbpf=true` = **44**.
 - **The first GTK window shipped** (2026-06-18, D21). `src/gtk/main.zig` (build `-Dgtk`,
   launch `./scripts/try-gtk.sh`) opens a live attributed-flow window over the
   `surveyor serve --socket` IPC: same binary frames, same `FlowTable`, same design-language
