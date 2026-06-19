@@ -25,8 +25,11 @@ const cartograph = @import("cartograph");
 const Reader = std.Io.Reader;
 const Writer = std.Io.Writer;
 const ipc = cartograph.ipc;
+const lens = cartograph.lens;
+const ontology = cartograph.ontology;
 const Flow = cartograph.Flow;
 const FlowTable = cartograph.FlowTable;
+const SessionState = cartograph.SessionState;
 
 // ---- minimal GTK4 / GLib / GObject C ABI ------------------------------------
 // Only the handful of entry points this window needs. All GObject pointers are opaque
@@ -35,6 +38,8 @@ const FlowTable = cartograph.FlowTable;
 const GCallback = *const fn () callconv(.c) void;
 const GUnixFDSourceFunc = *const fn (fd: c_int, condition: c_uint, user_data: ?*anyopaque) callconv(.c) c_int;
 const GtkApplicationActivate = *const fn (app: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void;
+// GtkEventControllerKey "key-pressed": (controller, keyval, keycode, modifiers, user_data) -> handled
+const GtkKeyPressed = *const fn (ctrl: ?*anyopaque, keyval: c_uint, keycode: c_uint, state: c_uint, user_data: ?*anyopaque) callconv(.c) c_int;
 
 // GApplicationFlags
 const G_APPLICATION_NON_UNIQUE: c_uint = 1 << 5;
@@ -73,6 +78,9 @@ extern fn gtk_widget_set_valign(widget: ?*anyopaque, alignment: c_uint) void;
 
 extern fn g_unix_fd_add(fd: c_int, condition: c_uint, function: GUnixFDSourceFunc, user_data: ?*anyopaque) c_uint;
 
+extern fn gtk_event_controller_key_new() ?*anyopaque;
+extern fn gtk_widget_add_controller(widget: ?*anyopaque, controller: ?*anyopaque) void;
+
 // design-language constants shared with the TUI's intent (DESIGN-LANGUAGE.md)
 const amber = "#ffaf00"; // fresh / first-seen "glow until greeted"
 const sky = "#5fafff"; // download-leaning rate
@@ -85,6 +93,8 @@ const App = struct {
     gpa: std.mem.Allocator,
     table: FlowTable,
     fd: std.posix.fd_t,
+    upstream_fd: ?std.posix.fd_t = null, // writable socket → surveyor (null over a pipe)
+    session: SessionState = .{},
     gapp: ?*anyopaque = null,
     label: ?*anyopaque = null,
     acc: std.ArrayList(u8) = .empty,
@@ -94,6 +104,18 @@ const App = struct {
         self.table.deinit();
         self.acc.deinit(self.gpa);
         self.gpa.free(self.markup);
+    }
+
+    /// Send a user-state change upstream to surveyor (no-op over a one-way pipe). The
+    /// one write path (D22): GTK never forks a private state cache — it drives the same
+    /// `user_state` frame the TUI does, and renders what surveyor echoes back.
+    fn sendUpstream(self: *App, us: ontology.UserState) void {
+        const fd = self.upstream_fd orelse return;
+        var buf: [ipc.max_frame]u8 = undefined;
+        var bw = Writer.fixed(&buf);
+        ipc.sendUserState(&bw, us) catch return;
+        const bytes = bw.buffered();
+        _ = std.os.linux.write(fd, bytes.ptr, bytes.len);
     }
 
     /// Parse all complete frames buffered in `acc`; returns true if a tick landed
@@ -110,6 +132,10 @@ const App = struct {
             if (try ipc.readFrame(&r)) |frame| switch (frame) {
                 .flow_upsert => |f| try self.table.apply(f),
                 .flow_closed => |k| self.table.remove(k),
+                // surveyor's authoritative session (inherit-on-connect + echo, D22)
+                .user_state => |us| if (self.session.apply(us)) {
+                    ticked = true;
+                },
                 .tick => ticked = true,
                 else => {},
             };
@@ -127,7 +153,7 @@ const App = struct {
         defer self.gpa.free(flows);
 
         var w = Writer.fixed(self.markup[0 .. self.markup.len - 1]);
-        renderMarkup(&w, flows) catch {}; // truncate gracefully if it ever overflows
+        renderMarkup(&w, flows, self.session) catch {}; // truncate gracefully if it ever overflows
         const n = w.buffered().len;
         self.markup[n] = 0;
         if (self.label) |l| gtk_label_set_markup(l, @ptrCast(self.markup.ptr));
@@ -161,7 +187,13 @@ fn span(w: *Writer, color: []const u8, s: []const u8, width: usize) Writer.Error
     try w.writeAll("</span>");
 }
 
-fn renderMarkup(w: *Writer, flows: []*Flow) Writer.Error!void {
+fn renderMarkup(w: *Writer, flows: []*Flow, session: SessionState) Writer.Error!void {
+    // Lenses decide which columns are drawn — the same view-model gate the TUI uses, so
+    // a toggle here shows/hides exactly what it shows/hides there (parity by construction).
+    const set = session.activeLenses();
+    const show_volume = set.contains(.volume);
+    const show_endpoint = set.contains(.endpoint);
+
     var down_total: u64 = 0;
     var up_total: u64 = 0;
     var attributed: usize = 0;
@@ -179,17 +211,32 @@ fn renderMarkup(w: *Writer, flows: []*Flow) Writer.Error!void {
     var ubuf: [32]u8 = undefined;
     try w.print(
         "<b>▟▖ cartograph</b>  <span foreground=\"{s}\">{d} flows · {d} attributed</span>   " ++
-            "<span foreground=\"{s}\">↓ {s}</span>  <span foreground=\"{s}\">↑ {s}</span>\n\n",
+            "<span foreground=\"{s}\">↓ {s}</span>  <span foreground=\"{s}\">↑ {s}</span>\n",
         .{ dim, flows.len, attributed, sky, cartograph.humanRate(&dbuf, down_total), tan, cartograph.humanRate(&ubuf, up_total) },
     );
 
-    // column header
+    // profile + active lenses — the user-state surface, so a toggle is *visible* (D22).
+    // "p" cycles the profile; "1–6" toggle the six lenses; the row reflects surveyor's
+    // authoritative session, not a private cache.
+    try w.print("<span foreground=\"{s}\">profile </span><b>{s}</b>   <span foreground=\"{s}\">lens</span> ", .{ dim, session.profile.label(), dim });
+    inline for (std.enums.values(lens.Lens), 1..) |l, n| {
+        const on = set.contains(l);
+        const color = if (on) sky else dim;
+        const weight_open = if (on) "<b>" else "";
+        const weight_close = if (on) "</b>" else "";
+        try w.print("<span foreground=\"{s}\">{s}{d}:{s}{s}</span> ", .{ color, weight_open, n, l.label(), weight_close });
+    }
+    try w.writeAll("\n\n");
+
+    // column header — only the columns the active lenses draw
     try w.print("<span foreground=\"{s}\">  ", .{dim});
     try col(w, "APP", 15);
     try col(w, "ENDPOINT", 32);
-    try col(w, "THROUGHPUT", 12);
-    try col(w, "TOTAL", 10);
-    try col(w, "RTT", 7);
+    if (show_volume) {
+        try col(w, "THROUGHPUT", 12);
+        try col(w, "TOTAL", 10);
+    }
+    if (show_endpoint) try col(w, "RTT", 7);
     try w.writeAll("</span>\n");
 
     // rows
@@ -215,12 +262,16 @@ fn renderMarkup(w: *Writer, flows: []*Flow) Writer.Error!void {
         const ep = cartograph.endpoint(&ebuf, f.key.remote, f.key.remote_port);
         try span(w, cat.hex(), ep, 32);
 
-        // throughput (rate-coloured), total bytes, rtt
-        try span(w, rateColor(f), cartograph.humanRate(&rbuf, f.throughput()), 12);
-        try span(w, dim, cartograph.humanBytes(&sbuf, f.rx_bytes + f.tx_bytes), 10);
+        if (show_volume) {
+            // throughput (rate-coloured), total bytes
+            try span(w, rateColor(f), cartograph.humanRate(&rbuf, f.throughput()), 12);
+            try span(w, dim, cartograph.humanBytes(&sbuf, f.rx_bytes + f.tx_bytes), 10);
+        }
 
-        const rtt = if (f.rtt_us == 0) "·" else std.fmt.bufPrint(&ttbuf, "{d:.0}ms", .{@as(f64, @floatFromInt(f.rtt_us)) / 1000.0}) catch "·";
-        try span(w, dim, rtt, 7);
+        if (show_endpoint) {
+            const rtt = if (f.rtt_us == 0) "·" else std.fmt.bufPrint(&ttbuf, "{d:.0}ms", .{@as(f64, @floatFromInt(f.rtt_us)) / 1000.0}) catch "·";
+            try span(w, dim, rtt, 7);
+        }
         try w.writeAll("\n");
     }
 
@@ -264,12 +315,44 @@ fn onSocketReady(fd: c_int, condition: c_uint, user_data: ?*anyopaque) callconv(
     return G_SOURCE_CONTINUE;
 }
 
+/// Keyboard: "p" cycles the profile, "1–6" toggle the six lenses. Each change goes
+/// through the shared `SessionState` and travels the `user_state` frame upstream to
+/// surveyor (D22) — the same one write path the TUI uses. We apply locally for a snappy
+/// redraw; surveyor echoes the authoritative session back and we converge on it.
+fn onKeyPressed(_: ?*anyopaque, keyval: c_uint, _: c_uint, _: c_uint, user_data: ?*anyopaque) callconv(.c) c_int {
+    const app: *App = @ptrCast(@alignCast(user_data.?));
+    const lens_keys = std.enums.values(lens.Lens);
+
+    switch (keyval) {
+        'p', 'P' => {
+            app.session.nextProfile();
+            app.sendUpstream(.{ .profile = app.session.profile });
+        },
+        '1'...'6' => {
+            const idx = keyval - '1';
+            if (idx >= lens_keys.len) return 0;
+            const l = lens_keys[idx];
+            const on = !app.session.lenses.contains(l);
+            app.session.toggleLens(l, on);
+            app.sendUpstream(.{ .lens_toggle = .{ .lens = l, .on = on } });
+        },
+        else => return 0, // not handled — let GTK have it
+    }
+    app.redraw();
+    return 1; // handled
+}
+
 fn onActivate(gapp: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
     const app: *App = @ptrCast(@alignCast(user_data.?));
 
     const window = gtk_application_window_new(gapp);
     gtk_window_set_title(window, "cartograph — live flows");
     gtk_window_set_default_size(window, 920, 600);
+
+    // a key controller on the window catches "p" / "1–6" anywhere in the window
+    const keys = gtk_event_controller_key_new();
+    _ = g_signal_connect_data(keys, "key-pressed", @ptrCast(@as(GtkKeyPressed, onKeyPressed)), app, null, 0);
+    gtk_widget_add_controller(window, keys);
 
     const label = gtk_label_new(null);
     gtk_label_set_xalign(label, 0);
@@ -337,6 +420,8 @@ pub fn main(init: std.process.Init) !void {
         .gpa = gpa,
         .table = FlowTable.init(gpa),
         .fd = fd,
+        // A socket is full-duplex, so toggles can travel upstream (D22). A pipe is one-way.
+        .upstream_fd = if (sock_path != null) fd else null,
         .markup = try gpa.alloc(u8, 512 * 1024),
     };
     defer app.deinit();

@@ -81,9 +81,15 @@ Cross-resource and visual-language work is threaded through, not bolted on at th
   `./scripts/try-gtk.sh`) — a live attributed-flow table over the IPC socket, same view-model
   + same design-language palette as the TUI (parity by construction; `Category.hex()` is the
   truecolor twin of `Category.ansi()`). Built by direct C FFI (D10). It now **grows with each
-  M3 capability** above (hybrid rows, enrichment, scoring, Greeting), not deferred. Next GTK
-  steps: lens/profile toggles + the `user_state` write path, then the docked "Why" panel and
-  category/risk visuals. See M4/FRONTENDS.md.
+  M3 capability** above (hybrid rows, enrichment, scoring, Greeting), not deferred.
+  - **✅ Lens/profile toggles + the `user_state` write path (D22, 2026-06-18).** Both frontends
+    drive a shared `SessionState` over a **bidirectional** `user_state` channel: surveyor owns
+    the session, sends it on connect (inherit, no fork), and echoes upstream changes. GTK `p`
+    cycles the profile and `1–6` toggle lenses (TUI too); the active profile/lens row + the
+    column set react live. Direction-of-truth split: profile/lens view-local, greeting/rule
+    shared (D22). This pays the critique §4 "Seam C" deadline down early, as planned.
+  - Next GTK steps: the docked **"Why" panel** for the selected flow, then category/risk
+    visuals (badges → confidence/impact rings) as scoring lands. See M4/FRONTENDS.md.
 
 ## M4 — The two expressions + the design language  *(GTK now starts in M3, D21 — this milestone is where it matures)*
 - **Terminal** (libvaxis, kitty-graphics logos) **and GTK** (GTK4 + zig-gobject), both over

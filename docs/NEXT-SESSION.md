@@ -4,6 +4,16 @@
 > ONTOLOGY.md and STATE.md. Goal of next session: **start M2 on the frame the critique gave us.**
 
 ## Where we are
+- **User-state ownership landed (2026-06-18, D22).** The `user_state` frame is now
+  **bidirectional and owned**: one `SessionState` (`src/lib/session.zig`) in `libcartograph`,
+  surveyor sends its authoritative session on connect (a frontend *inherits* it) and echoes
+  upstream changes — no private cache, no silent fork (the critique §4 "Seam C" deadline, paid
+  early). **Direction-of-truth split:** `profile`/`lens_toggle` are view-local (per connection;
+  ride the frame so surveyor can key Reading cadence off the profile at M3), `greeting`/`rule`
+  are shared truth (surveyor-owned, persisted, broadcast — lands with `Greeting` at M3). Live in
+  both frontends: GTK `p` cycles the profile, `1–6` toggle lenses, the layout reacts; TUI too.
+  Verified three ways — wire bytes (hello→session→echo), unit tests (reconstruction/idempotence/
+  round-trip), and the live GTK window driving + rendering surveyor's echo.
 - **The first GTK window shipped** (2026-06-18, D21). `src/gtk/main.zig` (build `-Dgtk`,
   launch `./scripts/try-gtk.sh`) opens a live attributed-flow window over the
   `surveyor serve --socket` IPC: same binary frames, same `FlowTable`, same design-language
@@ -52,15 +62,22 @@
 ✅ **The minimal GTK window is built** (category color/glyph, fresh dot, endpoints, throughput,
 totals, RTT — see "Where we are"). The directive holds: **every new capability ships with its
 GTK surface in the same step.** The immediate GTK follow-ups, in order:
-- **Lens/profile toggles in the window** (calm/nerd/security/resource) — and route them through
-  the **`user_state` IPC frame** (already defined, ipc.zig) so GTK and TUI share one source of
-  truth instead of forking a state cache. This is the D17/critique §4 "Seam C" deadline; doing
-  it as we grow GTK pays it down early.
-- **Category/risk visuals** (the badges + eventually the confidence/impact rings, DESIGN-
-  LANGUAGE §2/§4) as scoring lands.
-- **libadwaita styling + a docked "Why" panel** for the selected flow.
+- ✅ **Lens/profile toggles in the window**, routed through the **bidirectional `user_state`
+  frame** with surveyor as the session owner (D22, done 2026-06-18 — see "Where we are"). The
+  Seam-C deadline is paid.
+- **A docked "Why" panel** for the selected flow — the next GTK step. Needs row selection
+  (a `GtkListView`/`GtkColumnView` instead of one big markup label, or a click controller), then
+  a side panel that narrates the selected `Flow` from view-model fields (service/exposure/
+  category/endpoint now; enrichment + the decomposed score as M3 lands). This is also the natural
+  place the **shared `greeting` write** (name / ignore) first surfaces in the UI — and the first
+  consumer of the D22 *broadcast* half (currently built but unexercised: greeting → surveyor
+  store → all clients).
+- **Category/risk visuals** (badges + eventually the confidence/impact rings, DESIGN-LANGUAGE
+  §2/§4) as scoring emits `Reading`s.
+- **libadwaita styling** once the layout settles.
 Mechanism unchanged: thin renderer over `libcartograph`, binary IPC over the Unix socket,
-GTK4 by direct C FFI (D10). **Report with a screenshot.**
+GTK4 by direct C FFI (D10). Note: screenshots of a live run show real remote endpoints — keep
+them **out of the repo** (the STATE.md privacy posture applies to our own artifacts too).
 
 Then M3 capture/enrichment (each with its GTK surface):
 - **Hybrid capture first:** fuse inet_diag (baseline + bytes) with eBPF events so `--bpf` shows

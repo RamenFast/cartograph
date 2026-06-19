@@ -16,6 +16,7 @@ pub const table = @import("table.zig");
 pub const lens = @import("lens.zig");
 pub const json = @import("json.zig");
 pub const ontology = @import("ontology.zig");
+pub const session = @import("session.zig");
 pub const usock = @import("usock.zig");
 pub const parity = @import("parity.zig");
 
@@ -28,6 +29,7 @@ pub const Flow = flow.Flow;
 pub const Category = identity.Category;
 pub const FlowTable = table.FlowTable;
 pub const Observation = table.Observation;
+pub const SessionState = session.SessionState;
 
 /// Write `addr:port`, bracketing IPv6 the conventional way: `[2a04::1]:443`.
 pub fn writeEndpoint(w: *std.Io.Writer, addr: Addr, port: u16) std.Io.Writer.Error!void {

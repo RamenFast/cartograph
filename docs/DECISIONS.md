@@ -175,6 +175,40 @@ CLI-only eBPF test left him lost. **Mechanism is unchanged (D9/D10):** GTK4 via 
 stay thin renderers of one view-model, parity by construction. The GTK stack is already installed.
 This re-threads the ROADMAP: GTK work moves out of M4 and into each milestone. See FRONTENDS.md.
 
+## D22 — User-state ownership: one `SessionState`, bidirectional `user_state`, direction-of-truth split
+Closes the Seam-C deadline (D17/critique §4) properly. M2 reserved the `user_state` frame but
+it had **no upstream path** — surveyor only wrote, frontends only read — so each frontend would
+fork its own profile/lens cache and parity would fracture *silently* at the user-state layer (the
+exact failure the critique named). The fix has three parts:
+
+- **One type: `SessionState`** (`src/lib/session.zig`, in `libcartograph`). The active profile +
+  lens set, with a single `apply(UserState)` both renderers call. The anti-fork made a type —
+  TUI and GTK fed the same `user_state` frames hold byte-identical view state (proven:
+  reconstruction + idempotence tests).
+- **Bidirectional `user_state`.** A client socket is full-duplex: surveyor writes flows *down* it
+  and reads `user_state` *up* it. On connect, surveyor sends its **authoritative** session as the
+  minimal frames that reconstruct it (`.profile`, then a `.lens_toggle` per overridden lens) — a
+  connecting frontend **inherits** truth, never guesses. On an upstream change it folds it in and
+  **echoes** the authoritative session back. Truth flows from one owner; the frontend's local
+  apply is an optimistic update the echo confirms. (Verified on the wire and in the live GTK
+  window: `p` cycles the profile, `1–6` toggle lenses, both round-tripping through surveyor.)
+- **The direction-of-truth split (the Fi/Ti call).** Not every `user_state` change is *shared*:
+  - `profile` / `lens_toggle` are **view-local** — "what I'm looking at in *this* window." Your
+    security glance in the TUI must not hijack the GTK window; surveyor keeps them **per
+    connection** and does not broadcast them. They still travel the `user_state` frame (one write
+    path) so surveyor can key **Reading cadence off the active profile** (D19) at M3.
+  - `greeting` / `rule` are **shared truth** — "what is true about this entity." Surveyor-owned,
+    persisted (D20 sqlite), and **broadcast** to every client so a name/verdict shows identically
+    everywhere. `SessionState.apply` reports a greeting as "not mine" (returns false) so the
+    caller routes it to the shared store. That store + multi-client broadcast land **with the
+    `Greeting` implementation at M3** — the frame, the type, and the per-connection plumbing are
+    ready for it now.
+
+  Conflating the two (e.g. one global profile) would be a **Fi bug** in the project's own frame
+  (D19): the surface could no longer tell "what I'm viewing right now" from "what is true of the
+  map." A view is an honest Fi presentation; shared entity-state is closer to Ti structure. Keep
+  them on the same channel but on different sides of the truth boundary.
+
 ---
 
 <a id="install"></a>

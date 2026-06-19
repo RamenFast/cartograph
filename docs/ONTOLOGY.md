@@ -71,6 +71,15 @@ protocol grows additively and a renderer never needs a private state cache:
   `Greeting` writes (name / ignore / block). Without it, a GTK frontend forks its own
   user-state cache and parity fractures *silently* at the user-state layer (critique §5).
   This one must exist **before the M4 GTK spike**, not after.
+  - **✅ Bidirectional + owned (D22, 2026-06-18).** The frame now has an upstream path:
+    surveyor sends its authoritative session on connect (a frontend *inherits* it) and echoes
+    changes back, so view state lives in one `SessionState` (`src/lib/session.zig`), never a
+    private fork. **Direction-of-truth split:** `profile`/`lens_toggle` are **view-local**
+    (per surveyor connection — your TUI's "security" glance doesn't hijack the GTK window; they
+    ride the frame so surveyor can key Reading cadence off the profile at M3); `greeting`/`rule`
+    are **shared truth** (surveyor-owned, persisted, broadcast). `SessionState.apply` consumes
+    the view-local cases and reports `greeting` as "not mine" → bound for the shared store that
+    lands with the `Greeting` implementation below. Live in TUI + GTK (`p` profile, `1–6` lens).
 - `rule` — Rule create/update/delete; bidirectional.
 - `reading` — a new `Reading` (observation only).
 - `ruling` — a new `Ruling` (act; renderer shows the severed link, D14).

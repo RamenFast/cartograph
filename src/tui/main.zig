@@ -17,8 +17,10 @@ const Reader = std.Io.Reader;
 const Writer = std.Io.Writer;
 const ipc = cartograph.ipc;
 const lens = cartograph.lens;
+const ontology = cartograph.ontology;
 const Flow = cartograph.Flow;
 const FlowTable = cartograph.FlowTable;
+const SessionState = cartograph.SessionState;
 
 const tick_ms = 1000;
 
@@ -47,6 +49,9 @@ pub fn main(init: std.process.Init) !void {
         // same codec, same render() either way.
         const ipc_fd = if (sock_path) |p| try cartograph.usock.connect(p) else std.Io.File.stdin().handle;
         defer if (sock_path != null) cartograph.usock.close(ipc_fd);
+        // A socket is full-duplex, so profile/lens toggles can travel *upstream* to
+        // surveyor (D22). A pipe is one-way: view-only, no upstream.
+        if (sock_path != null) app.upstream_fd = ipc_fd;
         try app.runIpc(ipc_fd);
     } else try app.runLocal();
 }
@@ -58,7 +63,8 @@ const App = struct {
     tm: term.Term,
     out_state: std.Io.File.Writer,
     out_buf: []u8,
-    profile: lens.Profile = .calm,
+    session: SessionState = .{},
+    upstream_fd: ?std.posix.fd_t = null, // writable socket → surveyor, when over IPC
     quit: bool = false,
 
     fn init(gpa: std.mem.Allocator, io: std.Io) !App {
@@ -97,23 +103,46 @@ const App = struct {
         return &self.out_state.interface;
     }
 
-    /// Handle a buffer of key bytes; returns true if anything changed the view.
+    /// The six toggleable lenses, in enum order, bound to number keys 1–6.
+    const lens_keys = std.enums.values(lens.Lens);
+
+    /// Handle a buffer of key bytes; returns true if anything changed the view. Every
+    /// profile/lens change goes through `SessionState` and (over a socket) travels the
+    /// `user_state` frame upstream to surveyor — the one write path (D22), so TUI and GTK
+    /// can never fork a private state cache.
     fn handleKeys(self: *App, keys: []const u8) bool {
         var changed = false;
         for (keys) |k| switch (k) {
             'q', 'Q', 3 => self.quit = true, // 3 = Ctrl-C (raw mode)
             'p', 'P', '\t' => {
-                self.profile = switch (self.profile) {
-                    .calm => .nerd,
-                    .nerd => .security,
-                    .security => .resource,
-                    .resource => .calm,
-                };
+                self.session.nextProfile();
+                self.sendUpstream(.{ .profile = self.session.profile });
                 changed = true;
+            },
+            '1'...'6' => {
+                const idx = k - '1';
+                if (idx < lens_keys.len) {
+                    const l = lens_keys[idx];
+                    const on = !self.session.lenses.contains(l);
+                    self.session.toggleLens(l, on);
+                    self.sendUpstream(.{ .lens_toggle = .{ .lens = l, .on = on } });
+                    changed = true;
+                }
             },
             else => {},
         };
         return changed;
+    }
+
+    /// Send a user-state change upstream to surveyor (no-op without a writable socket:
+    /// in-process and pipe modes own their session locally).
+    fn sendUpstream(self: *App, us: ontology.UserState) void {
+        const fd = self.upstream_fd orelse return;
+        var buf: [ipc.max_frame]u8 = undefined;
+        var bw = Writer.fixed(&buf);
+        ipc.sendUserState(&bw, us) catch return;
+        const bytes = bw.buffered();
+        _ = std.os.linux.write(fd, bytes.ptr, bytes.len);
     }
 
     // ---- in-process capture loop --------------------------------------------
@@ -183,6 +212,11 @@ const App = struct {
             if (try ipc.readFrame(&r)) |frame| switch (frame) {
                 .flow_upsert => |f| try self.table.apply(f),
                 .flow_closed => |k| self.table.remove(k),
+                // surveyor's authoritative session (inherit-on-connect + echo, D22): the
+                // frontend renders from what the one owner confirms, never a private cache.
+                .user_state => |us| if (self.session.apply(us)) {
+                    ticked = true;
+                },
                 .tick => ticked = true,
                 else => {},
             };
@@ -199,15 +233,15 @@ const App = struct {
         const sz = self.tm.size();
         const flows = try self.table.snapshot(self.gpa);
         defer self.gpa.free(flows);
-        try render(self.w(), flows, sz, self.profile, mode_label);
+        try render(self.w(), flows, sz, self.session, mode_label);
         try self.w().flush();
     }
 };
 
 // ---- rendering --------------------------------------------------------------
 
-fn render(w: *Writer, flows: []*Flow, sz: term.Size, profile: lens.Profile, mode_label: []const u8) !void {
-    const set = profile.lenses();
+fn render(w: *Writer, flows: []*Flow, sz: term.Size, session: SessionState, mode_label: []const u8) !void {
+    const set = session.activeLenses();
 
     var down_total: u64 = 0;
     var up_total: u64 = 0;
@@ -232,8 +266,8 @@ fn render(w: *Writer, flows: []*Flow, sz: term.Size, profile: lens.Profile, mode
         term.dim,          term.reset, flows.len,
         attributed,        sky,        term.reset,
         drate,             tan,        term.reset,
-        urate,             term.dim,   mode_label,
-        profile.label(),   term.reset,
+        urate,                     term.dim, mode_label,
+        session.profile.label(),   term.reset,
     });
     try w.writeAll(term.clear_to_eol ++ "\r\n");
 
@@ -266,7 +300,7 @@ fn render(w: *Writer, flows: []*Flow, sz: term.Size, profile: lens.Profile, mode
 
     // --- footer --------------------------------------------------------------
     try w.print("\x1b[{d};1H{s}", .{ sz.rows, term.dim });
-    try w.writeAll("q quit · p profile · ");
+    try w.writeAll("q quit · p profile · 1-6 lens · ");
     try legend(w);
     try w.writeAll(term.reset ++ term.clear_to_eol);
 }
