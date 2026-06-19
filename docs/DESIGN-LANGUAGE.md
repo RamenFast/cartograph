@@ -114,3 +114,41 @@ for a real act (block a host, throttle an app, drop a rule, wipe history) is **n
 
 Same standard in the TUI: the destructive key is *never* Return; confirm is a typed word or a
 held key shown *after* the consequence list; the safe choices are the highlighted defaults.
+
+## 9. Scope — the blast-radius of a change, made visible (D22/D23)
+
+When you change something, *how far does it reach, and how long does it last?* That question
+deserves its own fixed symbol, because the answer is a precondition for acting wisely — and
+because two windows on the same machine will otherwise quietly confuse you ("I toggled it here,
+why didn't it change there?"). Scope is the [D22](DECISIONS.md) ownership ladder turned into
+something you can see.
+
+**It is its own axis — not danger.** Naming "mom's VPN" is *remembered* (permanent) yet
+harmless; *blocking* a host is remembered **and** consequential. So:
+- **Scope/permanence** (this section): WHERE a change applies + HOW LONG it survives.
+- **Danger** (§8, the consequence tree): how much it can *hurt*.
+They **compose** — a remembered-and-dangerous act (a block rule) wears the `●` scope glyph *and*
+gets the consequence-tree treatment. Conflating the two would be the bug.
+
+**The ladder (fixed, learnable — one glyph, one meaning, identical in TUI + GTK because it comes
+from `src/lib/scope.zig`, not the renderer):**
+
+| glyph | scope | reaches | lasts | example |
+|---|---|---|---|---|
+| **◌** | `view` | this window only | until you close it | profile, lens toggle |
+| **◍** | `session` | all my open windows | until surveyor restarts | *(reserved — the future "promote" gesture)* |
+| **●** | `kept` | every window | across reboots (sqlite, D20) | a Greeting, a Rule |
+
+The glyph's **visual weight escalates with blast radius** — hollow `◌` → half `◍` → solid `●` —
+so the eye reads the reach *before* it reads the word (D14: the signifier's weight matches the
+consequence). The dial is the same one as the risk/impact rings' "fullness = magnitude," kept
+deliberately consistent so it's one literacy, not two.
+
+**Where it shows:** *ambiently*, next to the controls it describes (the profile/lens row shows
+`◌ this view`, so you always know these toggles are local before you touch them); and *on the
+act*, when a change carries a wider scope (a greeting/rule write shows `●`), so a promotion to a
+wider reach is a visible escalation, never silent. Mechanically the rungs are exactly three points
+on the D22 data-flow: `view` = stays in the frontend's `SessionState`; `session` = sent to
+surveyor + broadcast to current clients; `kept` = broadcast **and** persisted + replayed to future
+clients. So "configurable scope" later is a *scope tag on the change* + this glyph — not new
+plumbing.

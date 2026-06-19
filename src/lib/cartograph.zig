@@ -17,6 +17,7 @@ pub const lens = @import("lens.zig");
 pub const json = @import("json.zig");
 pub const ontology = @import("ontology.zig");
 pub const session = @import("session.zig");
+pub const scope = @import("scope.zig");
 pub const usock = @import("usock.zig");
 pub const parity = @import("parity.zig");
 

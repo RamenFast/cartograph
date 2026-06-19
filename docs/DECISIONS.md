@@ -209,6 +209,22 @@ exact failure the critique named). The fix has three parts:
   map." A view is an honest Fi presentation; shared entity-state is closer to Ti structure. Keep
   them on the same channel but on different sides of the truth boundary.
 
+## D23 — Scope is a visible design-language axis (the blast-radius glyph)
+Per Ben (2026-06-18), making D22's view/shared distinction *legible* rather than implicit. Scope
+— how far a change reaches and how long it lasts — gets a fixed, learnable glyph, orthogonal to
+the §8 danger axis (the two compose; they are not the same). The vocabulary (Ben's pick —
+"concentric blast-radius," the cousin of the risk rings): **◌ `view`** (this window, forgotten on
+close) · **◍ `session`** (all my windows, forgotten on restart — reserved for a future "promote"
+gesture) · **● `kept`** (persisted + everywhere, survives reboot). Visual weight escalates with
+blast radius (hollow→half→solid) so the eye reads reach before the word (D14). Lives in
+`src/lib/scope.zig` (`Scope` + `scopeOf(UserState)`), so TUI and GTK can't disagree about what a
+change does; shown ambiently by the controls it governs (the profile/lens row shows `◌ this
+view`) and on the act for wider-scoped writes. The three rungs are literally three points on the
+D22 data-flow, so "configurable scope" later is a scope tag + this glyph, not new plumbing.
+**Scoped now (D23):** the *ambient indicator* + the vocabulary. The *promotion gesture*
+(Shift-to-broadcast) and the live `●` on a greeting/rule write land with the docked "Why" panel /
+the Greeting implementation (M3). See DESIGN-LANGUAGE §9.
+
 ---
 
 <a id="install"></a>

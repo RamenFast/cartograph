@@ -248,13 +248,15 @@ fn render(w: *Writer, flows: []*Flow, sz: term.Size, session: SessionState, mode
     var ubuf: [32]u8 = undefined;
     const drate = cartograph.humanRate(&dbuf, down_total);
     const urate = cartograph.humanRate(&ubuf, up_total);
-    try w.print("{s}{s}▟▖ cartograph{s}  {s}·{s}  {d} flows · {d} attributed    {s}↓{s} {s}  {s}↑{s} {s}    {s}{s} [{s}]{s}", .{
+    // ◌ this view: the profile/lens controls reach only this window (D22/D23).
+    const sc = cartograph.scope.Scope.view;
+    try w.print("{s}{s}▟▖ cartograph{s}  {s}·{s}  {d} flows · {d} attributed    {s}↓{s} {s}  {s}↑{s} {s}    {s}{s} [{s}] {s} {s}{s}", .{
         term.bold,         sky,        term.reset,
         term.dim,          term.reset, flows.len,
         attributed,        sky,        term.reset,
         drate,             tan,        term.reset,
         urate,                     term.dim, mode_label,
-        session.profile.label(),   term.reset,
+        session.profile.label(),   sc.glyph(), sc.label(), term.reset,
     });
     try w.writeAll(term.clear_to_eol ++ "\r\n");
 

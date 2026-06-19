@@ -203,8 +203,14 @@ fn renderMarkup(w: *Writer, flows: []*Flow, session: SessionState) Writer.Error!
 
     // profile + active lenses — the user-state surface, so a toggle is *visible* (D22).
     // "p" cycles the profile; "1–6" toggle the six lenses; the row reflects surveyor's
-    // authoritative session, not a private cache.
-    try w.print("<span foreground=\"{s}\">profile </span><b>{s}</b>   <span foreground=\"{s}\">lens</span> ", .{ dim, session.profile.label(), dim });
+    // authoritative session, not a private cache. The scope glyph says how far these
+    // controls reach: ◌ view-local — they change *this* window only, never your others,
+    // and are forgotten on close (D23). A future greeting write would carry ● (kept).
+    const sc = cartograph.scope.Scope.view;
+    try w.print(
+        "<span foreground=\"{s}\">profile </span><b>{s}</b>  <span foreground=\"{s}\">{s} {s}</span>   <span foreground=\"{s}\">lens</span> ",
+        .{ dim, session.profile.label(), dim, sc.glyph(), sc.label(), dim },
+    );
     inline for (std.enums.values(lens.Lens), 1..) |l, n| {
         const on = set.contains(l);
         const color = if (on) sky else dim;
