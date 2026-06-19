@@ -378,6 +378,58 @@ pub fn readFrame(r: *Reader) !?Frame {
     };
 }
 
+// ---- streaming reassembly (the read-side twin of sendFrame) -----------------
+
+/// Reassembles length-prefixed frames from a byte stream that arrives in arbitrary
+/// chunks — a socket or pipe `read` can split one frame across reads or coalesce many
+/// into one. Every consumer (the TUI, the GTK window, surveyor's upstream link) needs
+/// exactly this buffer dance; keeping it here, next to `sendFrame`, gives the wire's
+/// read side **one owner** so the copies can't drift.
+///
+///   stream.push(bytes_just_read);
+///   while (try stream.next()) |frame| switch (frame) { ... }
+pub const FrameStream = struct {
+    gpa: std.mem.Allocator,
+    acc: std.ArrayList(u8) = .empty,
+    pos: usize = 0, // bytes already consumed at the front of `acc`
+
+    pub fn init(gpa: std.mem.Allocator) FrameStream {
+        return .{ .gpa = gpa };
+    }
+
+    pub fn deinit(self: *FrameStream) void {
+        self.acc.deinit(self.gpa);
+    }
+
+    /// Feed in whatever you just read from the transport.
+    pub fn push(self: *FrameStream, bytes: []const u8) !void {
+        try self.acc.appendSlice(self.gpa, bytes);
+    }
+
+    /// Pull the next complete frame, or null if the buffer doesn't hold one yet (then
+    /// `push` more and call again). Compacts consumed bytes to the front when it drains,
+    /// so memory stays bounded by at most one partial frame.
+    pub fn next(self: *FrameStream) !?Frame {
+        const avail = self.acc.items.len - self.pos;
+        if (avail >= 4) {
+            const len = std.mem.readInt(u32, self.acc.items[self.pos..][0..4], .little);
+            if (len > max_frame) return error.FrameTooLarge; // a bad/oversized frame can't balloon `acc`
+            if (avail >= 4 + @as(usize, len)) {
+                var r = Reader.fixed(self.acc.items[self.pos .. self.pos + 4 + len]);
+                const frame = (try readFrame(&r)) orelse return error.InvalidFrame;
+                self.pos += 4 + len;
+                return frame;
+            }
+        }
+        if (self.pos > 0) { // no full frame: slide the partial remainder to the front
+            std.mem.copyForwards(u8, self.acc.items, self.acc.items[self.pos..]);
+            self.acc.items.len -= self.pos;
+            self.pos = 0;
+        }
+        return null;
+    }
+};
+
 // ---- tests ------------------------------------------------------------------
 
 test "flow round-trips through a frame" {
@@ -534,6 +586,54 @@ test "reading and ruling frames round-trip (a score shown vs an act done)" {
         try t.expectEqual(ontology.Effect.blocked, f.ruling.effect);
         try t.expectEqual(@as(u64, 42), f.ruling.rule_id);
     }
+}
+
+test "FrameStream reassembles frames split and coalesced across reads" {
+    const t = std.testing;
+    // produce three frames back-to-back
+    var buf: [512]u8 = undefined;
+    var w = Writer.fixed(&buf);
+    try sendHello(&w);
+    try sendTick(&w, 7);
+    try sendUserState(&w, .{ .profile = .security });
+    const wire = w.buffered();
+
+    var s = FrameStream.init(t.allocator);
+    defer s.deinit();
+
+    // feed it ONE byte at a time — the worst-case fragmentation a socket can hand us
+    var got_hello = false;
+    var got_tick: ?i64 = null;
+    var got_profile: ?lens.Profile = null;
+    for (wire) |b| {
+        try s.push(&.{b});
+        while (try s.next()) |frame| switch (frame) {
+            .hello => got_hello = true,
+            .tick => |ms| got_tick = ms,
+            .user_state => |us| got_profile = us.profile,
+            else => {},
+        };
+    }
+    try t.expect(got_hello);
+    try t.expectEqual(@as(?i64, 7), got_tick);
+    try t.expectEqual(@as(?lens.Profile, .security), got_profile);
+
+    // and the coalesced case: all three bytes-at-once in a single push
+    var s2 = FrameStream.init(t.allocator);
+    defer s2.deinit();
+    try s2.push(wire);
+    var n: usize = 0;
+    while (try s2.next()) |_| n += 1;
+    try t.expectEqual(@as(usize, 3), n);
+    try t.expectEqual(@as(?Frame, null), try s2.next()); // drained → null, not an error
+
+    // an oversized length is rejected, not honoured into an unbounded buffer
+    var s3 = FrameStream.init(t.allocator);
+    defer s3.deinit();
+    var big: [4]u8 = undefined;
+    std.mem.writeInt(u32, &big, max_frame + 1, .little);
+    try s3.push(&big);
+    try t.expectError(error.FrameTooLarge, s3.next());
 }
 
 test "unknown frames are skipped so the protocol grows additively" {

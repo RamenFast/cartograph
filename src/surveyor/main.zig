@@ -244,13 +244,16 @@ fn sendSession(w: *std.Io.Writer, s: cartograph.SessionState) !void {
 /// frames are *shared truth* bound for surveyor's persisted store (M3); they are
 /// recognised here and left for that store, never silently misapplied as view state.
 const ClientLink = struct {
-    gpa: std.mem.Allocator,
     fd: std.posix.fd_t,
-    acc: std.ArrayList(u8) = .empty,
+    frames: ipc.FrameStream,
     session: cartograph.SessionState = .{},
 
+    fn init(gpa: std.mem.Allocator, fd: std.posix.fd_t) ClientLink {
+        return .{ .fd = fd, .frames = ipc.FrameStream.init(gpa) };
+    }
+
     fn deinit(self: *ClientLink) void {
-        self.acc.deinit(self.gpa);
+        self.frames.deinit();
     }
 
     /// Read whatever the frontend just sent (the fd is already poll-ready), fold any
@@ -266,26 +269,15 @@ const ClientLink = struct {
             else => return error.Closed,
         }
         if (rc == 0) return error.Closed; // EOF: frontend gone
-        try self.acc.appendSlice(self.gpa, rbuf[0..rc]);
+        try self.frames.push(rbuf[0..rc]);
 
-        var start: usize = 0;
         var changed = false;
-        while (self.acc.items.len - start >= 4) {
-            const len = std.mem.readInt(u32, self.acc.items[start..][0..4], .little);
-            if (self.acc.items.len - start < 4 + @as(usize, len)) break;
-            var r = std.Io.Reader.fixed(self.acc.items[start .. start + 4 + len]);
-            if (try ipc.readFrame(&r)) |frame| switch (frame) {
-                .user_state => |us| if (self.session.apply(us)) {
-                    changed = true;
-                },
-                else => {}, // greeting/rule → shared store (M3); hello/flow_* never travel upstream
-            };
-            start += 4 + len;
-        }
-        if (start > 0) {
-            std.mem.copyForwards(u8, self.acc.items, self.acc.items[start..]);
-            self.acc.items.len -= start;
-        }
+        while (try self.frames.next()) |frame| switch (frame) {
+            .user_state => |us| if (self.session.apply(us)) {
+                changed = true;
+            },
+            else => {}, // greeting/rule → shared store (M3); hello/flow_* never travel upstream
+        };
         return changed;
     }
 };
@@ -305,7 +297,7 @@ fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, in_fd: ?std
     var table = cartograph.FlowTable.init(gpa);
     defer table.deinit();
 
-    var link: ?ClientLink = if (in_fd) |fd| .{ .gpa = gpa, .fd = fd } else null;
+    var link: ?ClientLink = if (in_fd) |fd| ClientLink.init(gpa, fd) else null;
     defer if (link) |*l| l.deinit();
 
     try ipc.sendHello(w);

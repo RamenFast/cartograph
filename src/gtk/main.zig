@@ -22,7 +22,6 @@
 const std = @import("std");
 const cartograph = @import("cartograph");
 
-const Reader = std.Io.Reader;
 const Writer = std.Io.Writer;
 const ipc = cartograph.ipc;
 const lens = cartograph.lens;
@@ -97,12 +96,12 @@ const App = struct {
     session: SessionState = .{},
     gapp: ?*anyopaque = null,
     label: ?*anyopaque = null,
-    acc: std.ArrayList(u8) = .empty,
+    frames: ipc.FrameStream,
     markup: []u8, // big scratch buffer for one rendered frame (NUL-terminated)
 
     fn deinit(self: *App) void {
         self.table.deinit();
-        self.acc.deinit(self.gpa);
+        self.frames.deinit();
         self.gpa.free(self.markup);
     }
 
@@ -118,33 +117,20 @@ const App = struct {
         _ = std.os.linux.write(fd, bytes.ptr, bytes.len);
     }
 
-    /// Parse all complete frames buffered in `acc`; returns true if a tick landed
-    /// (identical framing to the TUI's drainFrames — one codec, both renderers).
+    /// Apply every complete frame the stream holds; returns true if a tick landed (the
+    /// same `ipc.FrameStream` the TUI and surveyor use — one read-side codec, no drift).
     fn drainFrames(self: *App) !bool {
-        const acc = &self.acc;
-        var start: usize = 0;
         var ticked = false;
-        while (acc.items.len - start >= 4) {
-            const len = std.mem.readInt(u32, acc.items[start..][0..4], .little);
-            if (acc.items.len - start < 4 + @as(usize, len)) break;
-            const frame_bytes = acc.items[start .. start + 4 + len];
-            var r = Reader.fixed(frame_bytes);
-            if (try ipc.readFrame(&r)) |frame| switch (frame) {
-                .flow_upsert => |f| try self.table.apply(f),
-                .flow_closed => |k| self.table.remove(k),
-                // surveyor's authoritative session (inherit-on-connect + echo, D22)
-                .user_state => |us| if (self.session.apply(us)) {
-                    ticked = true;
-                },
-                .tick => ticked = true,
-                else => {},
-            };
-            start += 4 + len;
-        }
-        if (start > 0) {
-            std.mem.copyForwards(u8, acc.items, acc.items[start..]);
-            acc.items.len -= start;
-        }
+        while (try self.frames.next()) |frame| switch (frame) {
+            .flow_upsert => |f| try self.table.apply(f),
+            .flow_closed => |k| self.table.remove(k),
+            // surveyor's authoritative session (inherit-on-connect + echo, D22)
+            .user_state => |us| if (self.session.apply(us)) {
+                ticked = true;
+            },
+            .tick => ticked = true,
+            else => {},
+        };
         return ticked;
     }
 
@@ -308,7 +294,7 @@ fn onSocketReady(fd: c_int, condition: c_uint, user_data: ?*anyopaque) callconv(
             g_application_quit(app.gapp);
             return G_SOURCE_REMOVE;
         }
-        app.acc.appendSlice(app.gpa, rbuf[0..rc]) catch return G_SOURCE_CONTINUE;
+        app.frames.push(rbuf[0..rc]) catch return G_SOURCE_CONTINUE;
     }
 
     if (app.drainFrames() catch false) app.redraw();
@@ -422,6 +408,7 @@ pub fn main(init: std.process.Init) !void {
         .fd = fd,
         // A socket is full-duplex, so toggles can travel upstream (D22). A pipe is one-way.
         .upstream_fd = if (sock_path != null) fd else null,
+        .frames = ipc.FrameStream.init(gpa),
         .markup = try gpa.alloc(u8, 512 * 1024),
     };
     defer app.deinit();

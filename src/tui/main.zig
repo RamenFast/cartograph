@@ -13,7 +13,6 @@ const cartograph = @import("cartograph");
 const capture = @import("capture");
 const term = @import("term.zig");
 
-const Reader = std.Io.Reader;
 const Writer = std.Io.Writer;
 const ipc = cartograph.ipc;
 const lens = cartograph.lens;
@@ -180,8 +179,8 @@ const App = struct {
         defer self.leaveScreen();
 
         const stdin_fd = ipc_fd;
-        var acc: std.ArrayList(u8) = .empty;
-        defer acc.deinit(self.gpa);
+        var frames = ipc.FrameStream.init(self.gpa);
+        defer frames.deinit();
         var rbuf: [64 * 1024]u8 = undefined;
 
         try self.draw("live · ipc");
@@ -194,38 +193,26 @@ const App = struct {
             if (mask & 0b01 != 0) {
                 const rc = std.os.linux.read(stdin_fd, &rbuf, rbuf.len);
                 if (std.os.linux.errno(rc) != .SUCCESS or rc == 0) break; // EOF: surveyor gone
-                try acc.appendSlice(self.gpa, rbuf[0..rc]);
-                if (try self.drainFrames(&acc)) try self.draw("live · ipc");
+                try frames.push(rbuf[0..rc]);
+                if (try self.drainFrames(&frames)) try self.draw("live · ipc");
             }
         }
     }
 
-    /// Parse all complete frames buffered in `acc`; returns true if a tick landed.
-    fn drainFrames(self: *App, acc: *std.ArrayList(u8)) !bool {
-        var start: usize = 0;
+    /// Apply every complete frame the stream holds; returns true if a tick landed.
+    fn drainFrames(self: *App, frames: *ipc.FrameStream) !bool {
         var ticked = false;
-        while (acc.items.len - start >= 4) {
-            const len = std.mem.readInt(u32, acc.items[start..][0..4], .little);
-            if (acc.items.len - start < 4 + @as(usize, len)) break;
-            const frame_bytes = acc.items[start .. start + 4 + len];
-            var r = Reader.fixed(frame_bytes);
-            if (try ipc.readFrame(&r)) |frame| switch (frame) {
-                .flow_upsert => |f| try self.table.apply(f),
-                .flow_closed => |k| self.table.remove(k),
-                // surveyor's authoritative session (inherit-on-connect + echo, D22): the
-                // frontend renders from what the one owner confirms, never a private cache.
-                .user_state => |us| if (self.session.apply(us)) {
-                    ticked = true;
-                },
-                .tick => ticked = true,
-                else => {},
-            };
-            start += 4 + len;
-        }
-        if (start > 0) {
-            std.mem.copyForwards(u8, acc.items, acc.items[start..]);
-            acc.items.len -= start;
-        }
+        while (try frames.next()) |frame| switch (frame) {
+            .flow_upsert => |f| try self.table.apply(f),
+            .flow_closed => |k| self.table.remove(k),
+            // surveyor's authoritative session (inherit-on-connect + echo, D22): the
+            // frontend renders from what the one owner confirms, never a private cache.
+            .user_state => |us| if (self.session.apply(us)) {
+                ticked = true;
+            },
+            .tick => ticked = true,
+            else => {},
+        };
         return ticked;
     }
 
