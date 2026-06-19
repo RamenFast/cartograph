@@ -77,8 +77,13 @@ Cross-resource and visual-language work is threaded through, not bolted on at th
 - **`Greeting` lands here** (the persistence seam made type), after passing the type test;
   scoring emits **`Reading`s**. **Every M1 in-process test gains an IPC twin** so the parity
   claim survives the renderer swap (critique §5.2/§6).
-- **GTK (D21):** a minimal GTK4 window over the IPC socket ships *now* and grows with each of the
-  above — the visual surface is built incrementally, not deferred. See M4/FRONTENDS.md.
+- **GTK (D21):** ✅ **the first GTK4 window shipped** (`src/gtk/main.zig`, `-Dgtk`,
+  `./scripts/try-gtk.sh`) — a live attributed-flow table over the IPC socket, same view-model
+  + same design-language palette as the TUI (parity by construction; `Category.hex()` is the
+  truecolor twin of `Category.ansi()`). Built by direct C FFI (D10). It now **grows with each
+  M3 capability** above (hybrid rows, enrichment, scoring, Greeting), not deferred. Next GTK
+  steps: lens/profile toggles + the `user_state` write path, then the docked "Why" panel and
+  category/risk visuals. See M4/FRONTENDS.md.
 
 ## M4 — The two expressions + the design language  *(GTK now starts in M3, D21 — this milestone is where it matures)*
 - **Terminal** (libvaxis, kitty-graphics logos) **and GTK** (GTK4 + zig-gobject), both over

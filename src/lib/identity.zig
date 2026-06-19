@@ -55,6 +55,27 @@ pub const Category = enum(u8) {
         };
     }
 
+    /// The *same* fixed color as `ansi()`, as an `#rrggbb` hex string — the truecolor
+    /// twin of each 256-palette index, for renderers that want RGB (GTK/Pango, CSS, the
+    /// web view). Kept here so every frontend draws one design-language palette from the
+    /// view-model, never its own (DECISIONS D14, DESIGN-LANGUAGE §6). TUI `ansi()` and
+    /// GTK `hex()` are the same color by construction.
+    pub fn hex(c: Category) []const u8 {
+        return switch (c) {
+            .unknown => "#8a8a8a", // grey (xterm 245)
+            .loopback => "#87afd7", // soft blue (110)
+            .lan => "#87d787", // green (114)
+            .web => "#5fafff", // sky (75)
+            .dns => "#af87ff", // violet (141)
+            .ntp => "#d7af87", // tan (180)
+            .mail => "#ffaf87", // peach (216)
+            .ssh => "#ff8700", // orange (208)
+            .listen => "#ff5f5f", // alert red (203)
+            .multicast => "#87af87", // muted green (108)
+            .internet => "#5fd7ff", // cyan (81)
+        };
+    }
+
     pub fn label(c: Category) []const u8 {
         return switch (c) {
             .unknown => "unknown",
@@ -253,6 +274,22 @@ test "exposure flags the attack surface for listeners" {
     try t.expectEqual(Exposure.network, exposure(k(Addr.v4(.{ 192, 168, 1, 9 }), 22), .listen));
     try t.expectEqual(Exposure.internet, exposure(k(Addr.v4(.{ 203, 0, 113, 7 }), 443), .listen));
     try t.expectEqual(Exposure.none, exposure(k(Addr.v4(.{ 192, 168, 1, 9 }), 50000), .established)); // not a listener
+}
+
+test "every category has a well-formed hex twin (one palette, all renderers)" {
+    const t = std.testing;
+    for (std.enums.values(Category)) |c| {
+        const h = c.hex();
+        try t.expectEqual(@as(usize, 7), h.len); // #rrggbb
+        try t.expectEqual(@as(u8, '#'), h[0]);
+        for (h[1..]) |ch| try t.expect(std.ascii.isHex(ch));
+        // a non-empty ansi() twin must exist for the same category (parity of the palette)
+        try t.expect(c.ansi().len > 0);
+    }
+    // spot-check the load-bearing ones against the TUI's 256-palette indices
+    try t.expectEqualStrings("#5fafff", Category.web.hex()); // 75
+    try t.expectEqualStrings("#ff5f5f", Category.listen.hex()); // 203
+    try t.expectEqualStrings("#af87ff", Category.dns.hex()); // 141
 }
 
 test "classify by tuple" {

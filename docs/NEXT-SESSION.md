@@ -4,6 +4,13 @@
 > ONTOLOGY.md and STATE.md. Goal of next session: **start M2 on the frame the critique gave us.**
 
 ## Where we are
+- **The first GTK window shipped** (2026-06-18, D21). `src/gtk/main.zig` (build `-Dgtk`,
+  launch `./scripts/try-gtk.sh`) opens a live attributed-flow window over the
+  `surveyor serve --socket` IPC: same binary frames, same `FlowTable`, same design-language
+  palette as the TUI (`Category.hex()` = the truecolor twin of `Category.ansi()`) — parity by
+  construction. GTK4 is reached by **direct C FFI** (D10 refined; the libvaxis precedent —
+  zig-gobject is a later swap). **Verified live** on DISPLAY :0 (real flows, colors, glyphs,
+  v6 endpoints, RTT). GTK now grows with every M3 capability instead of waiting for M4.
 - **M2 built and on `main`** (2026-06-18). The eBPF capture source (CO-RE,
   `tp_btf/inet_sock_set_state`, `-Dbpf=true`) behind the `Source` seam; the Unix-socket
   privilege boundary; the act ontology (D19) + four IPC frames; the `?`-flow answer
@@ -41,16 +48,21 @@
   deadline: **before the M4 GTK spike.**
 - **UDP throughput** stays a known limitation, not a half-fix.
 
-## Next stage — the GTK UI (Ben's directive, D21), then M3
-**Build the GTK UI now** (D21, [[feedback]]-equivalent): a minimal GTK4 window over the IPC
-socket showing the live flow table, then grow it with every feature. Ben is visual and got lost
-in CLI-only testing — he wants to *see* each layer. Mechanism: GTK4 + zig-gobject over
-`libcartograph`, reading the binary IPC over the Unix socket (already live). Start with the spike
-(D10: zig-gobject; Vala fallback if ergonomics bite), a window listing flows from
-`surveyor serve --socket`, then category color/glyph, then the lenses. **Report with a
-screenshot, not a CLI dump.** GTK stack is already installed (gtk4 4.14.5, libadwaita 1.5.0).
+## Next stage — grow the GTK UI with M3 (the first window is done, D21)
+✅ **The minimal GTK window is built** (category color/glyph, fresh dot, endpoints, throughput,
+totals, RTT — see "Where we are"). The directive holds: **every new capability ships with its
+GTK surface in the same step.** The immediate GTK follow-ups, in order:
+- **Lens/profile toggles in the window** (calm/nerd/security/resource) — and route them through
+  the **`user_state` IPC frame** (already defined, ipc.zig) so GTK and TUI share one source of
+  truth instead of forking a state cache. This is the D17/critique §4 "Seam C" deadline; doing
+  it as we grow GTK pays it down early.
+- **Category/risk visuals** (the badges + eventually the confidence/impact rings, DESIGN-
+  LANGUAGE §2/§4) as scoring lands.
+- **libadwaita styling + a docked "Why" panel** for the selected flow.
+Mechanism unchanged: thin renderer over `libcartograph`, binary IPC over the Unix socket,
+GTK4 by direct C FFI (D10). **Report with a screenshot.**
 
-Then M3 capture/enrichment:
+Then M3 capture/enrichment (each with its GTK surface):
 - **Hybrid capture first:** fuse inet_diag (baseline + bytes) with eBPF events so `--bpf` shows
   the existing table *and* the closed `?` rows (M2 left `.bpf` either/or — see ROADMAP M3).
 - Enrichment (DNS/SNI, GeoIP/ASN MMDB, nDPI) + impact/confidence scoring emitting `Reading`s;

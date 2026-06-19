@@ -37,10 +37,25 @@ once, appears everywhere.
   (M4/M7). Because everything routes through the view-model + a thin render boundary,
   adopting libvaxis later is a *render-backend swap*, not a rewrite.
 
-## The GTK expression — GTK4 + zig-gobject
-- **Why zig-gobject:** GObject-introspection-generated GTK4 bindings for Zig, actively
-  maintained and **used in production by Ghostty** — so the GTK app stays Zig-native and
-  links the *same* `libcartograph`. No second language, no glue.
+## The GTK expression — GTK4 (Zig)
+- *Status (D21):* **a live GTK4 window ships now** (`src/gtk/main.zig`, build `-Dgtk`,
+  launch `./scripts/try-gtk.sh`). It connects to `surveyor serve --socket` over the Unix
+  socket, decodes the **same binary IPC frames** as the TUI, folds them into the **same
+  `FlowTable`**, and renders a live attributed-flow table — category color + glyph, fresh-
+  flow amber dot, IPv6-bracketed endpoints, live throughput, totals, RTT. The colors are
+  `Category.hex()`, the truecolor twin of the TUI's `Category.ansi()`, so the two renderers
+  draw one design-language palette from the view-model (D14) — parity by construction.
+- **Binding: direct C FFI for now, zig-gobject later.** The window reaches GTK4 through
+  hand-written `extern` declarations linking system `gtk4`/`glib`/`gobject` — no codegen
+  dependency. This is the **libvaxis precedent** applied to GTK: we are frozen on Zig 0.16
+  *ahead of the ecosystem* (D16), so we ship a native renderer behind the view-model
+  boundary today; adopting zig-gobject's generated bindings later is a *binding-layer swap*,
+  not a rewrite (D10). It also keeps the app Zig-native and glue-free, the original reason
+  for the binding choice.
+- **Why zig-gobject (the eventual path):** GObject-introspection-generated GTK4 bindings for
+  Zig, actively maintained and **used in production by Ghostty** — type-safe bindings that
+  still link the *same* `libcartograph`. Swap it in when its ergonomics are wanted and it
+  tracks our pinned Zig.
 - **GPU-accelerated for free:** GTK4's GSK renderer uses Vulkan/GL — the map canvas is
   hardware-accelerated on your RX 6700 XT out of the box (see GPU.md for the custom
   compute path on top).

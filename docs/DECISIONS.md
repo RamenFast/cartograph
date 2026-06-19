@@ -68,10 +68,22 @@ Terminal = libvaxis (kitty-graphics logos); GTK = GTK4 via zig-gobject, GPU-acce
 X11+Wayland native. **Elixir/LiveView is demoted to an optional remote view** (supersedes
 the Elixir-primary half of D1). See FRONTENDS.md.
 
-## D10 — GTK binding: zig-gobject (Vala fallback)
+## D10 — GTK binding: direct C FFI now; zig-gobject the eventual binding (Vala fallback)
 zig-gobject keeps the GTK app Zig-native and links libcartograph with no glue (proven by
 Ghostty). If ergonomics bite, **Vala** (GTK-native, compiles to C, FFIs the Zig core over
-the C ABI) is the elegant fallback — swappable without touching the core. Spike early in M4.
+the C ABI) is the elegant fallback — swappable without touching the core.
+
+**Refined 2026-06-18 (the first GTK window, D21):** the shipped frontend reaches GTK4 by
+**direct C FFI** — hand-written `extern` decls linking system `gtk4`/`glib`/`gobject`
+(`src/gtk/main.zig`, build `-Dgtk`) — *not* zig-gobject yet. Reason: we are frozen on Zig
+0.16 **ahead of the ecosystem** (D16), so a heavy codegen binding that pins specific Zig
+versions is a compatibility + fetch risk this early. This is the **same call as libvaxis for
+the TUI**: ship a native renderer behind the view-model boundary now; the generated binding
+becomes a *binding-layer swap* later, not a rewrite. Direct FFI still satisfies D10's intent
+(Zig-native, links the same `libcartograph`, FFI over the C ABI — exactly what the Vala
+fallback would do, kept in Zig) and the "no hidden glue, auditable" ethos. zig-gobject (or
+Vala) remains the documented upgrade path when its ergonomics are wanted and it tracks our
+pinned Zig. Not deferred to a spike — it is built and running.
 
 ## D11 — Active blocking is in scope (XDP), observe-first
 Per "definitely want both": allow/block/throttle by app/host/flow via XDP; rules are
@@ -172,10 +184,15 @@ libbpf-dev, libpcap-dev, libcap2-bin, libndpi-dev, libelf-dev, bpftrace, tshark/
 **Elixir/Erlang OTP 27**. That unlocks M2 (eBPF), M3 (nDPI), M5 (pcap/tshark), and the
 optional remote view.
 
-**Remaining — only the GTK frontend stack (for M4):**
+**GTK frontend stack — also already installed** (confirmed 2026-06-18: gtk4 4.14.5,
+libadwaita 1.5.0, gobject-introspection 1.80.1). The GTK window builds + runs today
+(`-Dgtk`, `./scripts/try-gtk.sh`), linking system GTK by direct C FFI (D10). For reference,
+the apt line that provides it:
 ```bash
 sudo apt install libgtk-4-dev libadwaita-1-dev gobject-introspection libgirepository1.0-dev
 sudo apt install radeontop   # optional: GPU telemetry cross-check
 ```
-`libvaxis` and `zig-gobject` are **Zig packages fetched by the build**, not apt. Note: apt
-is not passwordless in the agent sandbox, so these must be run by you.
+`libvaxis` and `zig-gobject` would be **Zig packages fetched by the build**, not apt — and
+the current direct-FFI GTK frontend needs neither. Note: apt is not passwordless in the
+agent sandbox, so any install must be run by you. **Nothing is left to install to build or
+run anything in the repo today.**

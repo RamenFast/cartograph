@@ -6,8 +6,9 @@
 > app's icon, the remote service's logo) and a continuous zoom from "who is my machine
 > talking to right now" all the way down to raw packet bytes.
 
-*Working title — see [docs/DECISIONS.md](docs/DECISIONS.md). Status: **M1 shipped** — working
-unprivileged capture core + live TUI; M2 (eBPF) next. New here? Read [docs/NEXT-SESSION.md](docs/NEXT-SESSION.md).*
+*Working title — see [docs/DECISIONS.md](docs/DECISIONS.md). Status: **M2 built** — unprivileged
+capture core + live TUI **and a live GTK window**, eBPF source (attach verified), and the
+Unix-socket privilege boundary. New here? Read [docs/NEXT-SESSION.md](docs/NEXT-SESSION.md).*
 
 ---
 
@@ -52,10 +53,10 @@ renderer — see [docs/FRONTENDS.md](docs/FRONTENDS.md)):
   compile *to* the eBPF target — kernel programs and loader in one language. **No Python,
   no scripting glue, anywhere in the product.**
 - **Two native frontends over the same `libcartograph` view-model:**
-  - **Terminal** — Zig + **libvaxis** (kitty-graphics protocol → *real logos in the
-    terminal*, not just the GTK app).
-  - **GTK** — GTK4 via **zig-gobject** (the bindings Ghostty uses), GPU-accelerated,
-    **X11 and Wayland**-native with zero special code.
+  - **Terminal** — native-Zig renderer today (libvaxis later for kitty-graphics logos).
+  - **GTK** — **a live GTK4 window today** (GTK4 linked by direct C FFI from Zig; GPU-
+    accelerated, **X11 and Wayland**-native), built incrementally alongside every feature
+    (D21). zig-gobject's generated bindings remain a later drop-in swap (D10).
 - **`atlas/`** — *optional* remote view in **Elixir/Phoenix LiveView** (OTP 27 installed)
   for watching a headless box from your phone. Bonus, not required.
 
@@ -105,6 +106,10 @@ stream. See **[docs/EXPERIMENTS.md](docs/EXPERIMENTS.md)**.
 # eBPF capture (M2, opt-in). One script builds it, grants caps, and tests it:
 ./scripts/try-ebpf.sh                 # asks for your password once (setcap only)
 ./scripts/try-ebpf.sh --undo          # remove the caps, back to unprivileged
+
+# the GTK window (opt-in build). One script builds it and opens it over the socket:
+./scripts/try-gtk.sh                  # unprivileged; close the window to stop
+./toolchain/zig build run-gtk -Dgtk -- --socket /tmp/cg.sock   # or run it directly
 ```
 Without caps, `surveyor … --bpf` falls back to the inet_diag path *loudly* (it tells
 you exactly what's missing) — it never silently downgrades and never crashes.
@@ -130,9 +135,12 @@ cartograph/
 │   │   ├── flow.zig · table.zig · ipc.zig · identity.zig · lens.zig · sparkline.zig
 │   ├── capture/         ← capture core: inet_diag byte counters + /proc attribution
 │   │   ├── diag.zig · proc.zig · capture.zig
-│   ├── surveyor/main.zig   ← capture CLI: `snapshot` | `serve` (binary IPC)
-│   └── tui/             ← the first frontend: live attributed-flow TUI
-│       ├── main.zig · term.zig
+│   ├── capture/bpf/    ← the CO-RE eBPF program (cartograph.bpf.c) + event.h
+│   ├── surveyor/main.zig   ← capture CLI: `snapshot` | `serve` (binary IPC / socket)
+│   ├── tui/             ← the first frontend: live attributed-flow TUI
+│   │   ├── main.zig · term.zig
+│   └── gtk/main.zig    ← the GTK4 frontend: live flow window over the IPC socket
+├── scripts/            ← try-ebpf.sh (eBPF + caps) · try-gtk.sh (build + open the window)
 ├── man/cartograph.1     ← man page draft (Bloom UX) — renders clean
 ├── atlas/               ← optional Elixir/LiveView remote view (scaffold pending)
 ├── toolchain/           ← vendored Zig 0.16.0 (gitignored)
@@ -168,12 +176,14 @@ libndpi-dev, libelf-dev, tshark/dumpcap, and Elixir/Erlang OTP 27.** 🎉 That u
 eBPF core (M2), nDPI classification (M3), deep-capture export (M5), and the optional
 remote view.
 
-**Still needed — only the GTK frontend stack:**
+The **GTK stack is also installed** (gtk4 4.14.5, libadwaita 1.5.0, gobject-introspection)
+and the GTK window builds + runs today (`./scripts/try-gtk.sh`). For reference, the apt line is:
 ```bash
 sudo apt install libgtk-4-dev libadwaita-1-dev gobject-introspection libgirepository1.0-dev
 sudo apt install radeontop   # optional: nice for cross-checking GPU telemetry
 ```
-(`libvaxis` and `zig-gobject` are Zig packages the build fetches — not apt.)
+(`libvaxis` and `zig-gobject` are Zig packages a build would fetch — not apt. The current GTK
+frontend links system GTK directly via C FFI and needs neither.)
 
 **Kernel recompile is NOT required** — this kernel (6.17) already exposes BTF and every
 BPF/XDP feature we need. Rationale in [docs/DECISIONS.md](docs/DECISIONS.md) (D3).

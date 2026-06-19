@@ -81,6 +81,36 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(tui);
 
+    // --- cartograph-gtk exe: the GTK4 frontend, gated behind -Dgtk -------------
+    // Default OFF so the base build needs no system GUI libs (the TUI is dependency-
+    // free). -Dgtk=true links system gtk4/glib/gobject via pkg-config and builds the
+    // window. Like the TUI, it's a thin renderer over `libcartograph` reading the same
+    // binary IPC (D9/D21) — parity by construction. GTK is reached by direct C FFI
+    // (FRONTENDS.md / D10); the build just links the libraries.
+    const want_gtk = b.option(bool, "gtk", "Build the GTK4 frontend (links system gtk4/glib/gobject)") orelse false;
+    if (want_gtk) {
+        const gtk_mod = b.createModule(.{
+            .root_source_file = b.path("src/gtk/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{.{ .name = "cartograph", .module = cartograph }},
+        });
+        gtk_mod.linkSystemLibrary("gtk4", .{});
+        gtk_mod.linkSystemLibrary("glib-2.0", .{});
+        gtk_mod.linkSystemLibrary("gobject-2.0", .{});
+        gtk_mod.linkSystemLibrary("gio-2.0", .{});
+        const gtk = b.addExecutable(.{ .name = "cartograph-gtk", .root_module = gtk_mod });
+        b.installArtifact(gtk);
+
+        // `zig build run-gtk -Dgtk -- --socket <path>` → the GTK window over the socket.
+        const run_gtk_step = b.step("run-gtk", "Run the GTK frontend (needs --socket <path> or a piped serve)");
+        const run_gtk = b.addRunArtifact(gtk);
+        run_gtk.step.dependOn(b.getInstallStep());
+        if (b.args) |args| run_gtk.addArgs(args);
+        run_gtk_step.dependOn(&run_gtk.step);
+    }
+
     // --- man page -------------------------------------------------------------
     b.installFile("man/cartograph.1", "share/man/man1/cartograph.1");
 
