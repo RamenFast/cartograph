@@ -13,6 +13,8 @@ const std = @import("std");
 const flow = @import("flow.zig");
 const ipc = @import("ipc.zig");
 const table = @import("table.zig");
+const lens = @import("lens.zig");
+const session = @import("session.zig");
 
 const Flow = flow.Flow;
 const FlowKey = flow.FlowKey;
@@ -108,6 +110,47 @@ test "ipc round-trip preserves every wire field (property, 500 flows)" {
         if (!flowWireEqual(f, g)) {
             std.debug.print("parity mismatch at flow #{d}\n", .{i});
             return error.ParityFracture;
+        }
+    }
+}
+
+// ---- the user-state half of parity (D22) ------------------------------------
+// The flow tests above prove *captured* state survives the wire. A frontend also holds
+// *user-authored* view state (profile + lenses), and surveyor syncs it as `user_state`
+// frames on connect. That path must round-trip identically too, or a connecting frontend
+// inherits a *different* session than surveyor holds — the silent fracture D22 closes.
+
+/// Sync a session exactly as surveyor does (the `.profile` base, then a `.lens_toggle`
+/// per overridden lens), through the real `ipc` codec, then rebuild it on the far side.
+fn sessionRoundTrip(s: session.SessionState) !session.SessionState {
+    var buf: [ipc.max_frame * 8]u8 = undefined; // headroom for profile + up-to-N toggles
+    var w = std.Io.Writer.fixed(&buf);
+    try ipc.sendUserState(&w, .{ .profile = s.profile });
+    inline for (std.enums.values(lens.Lens)) |l| {
+        if (s.lensOverridden(l))
+            try ipc.sendUserState(&w, .{ .lens_toggle = .{ .lens = l, .on = s.lenses.contains(l) } });
+    }
+    var r = std.Io.Reader.fixed(w.buffered());
+    var out = session.SessionState{};
+    while (try ipc.readFrame(&r)) |frame| {
+        std.debug.assert(frame == .user_state);
+        _ = out.apply(frame.user_state);
+    }
+    return out;
+}
+
+test "session survives the user_state codec identically (property: every profile × random toggles)" {
+    var prng = std.Random.DefaultPrng.init(0x5E5510_0FED_FACE);
+    const rnd = prng.random();
+    for (std.enums.values(lens.Profile)) |p| {
+        var i: usize = 0;
+        while (i < 50) : (i += 1) {
+            var s = session.SessionState.init(p);
+            inline for (std.enums.values(lens.Lens)) |l| {
+                if (rnd.boolean()) s.toggleLens(l, rnd.boolean()); // random deviations
+            }
+            const back = try sessionRoundTrip(s);
+            if (!s.eql(back)) return error.SessionParityFracture;
         }
     }
 }
