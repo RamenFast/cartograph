@@ -204,6 +204,16 @@ pub const FlowKey = struct {
     remote_port: u16,
 };
 
+/// What a user-authored act (a Greeting, a Rule) or a Focus is *about*. A tagged union so
+/// the target's kind stays explicit on the wire and in the UI — never one ambiguous key.
+/// Lives here (the leaf data layer) rather than in ontology.zig so both the act ontology
+/// and `focus.zig` can name it without an import cycle.
+pub const EntityKey = union(enum(u8)) {
+    host: Addr,
+    app: Str(64), // app/comm name (exe-path identity arrives with M3 enrichment)
+    asn: u32,
+};
+
 /// One conversation, as the view-model sees it.
 pub const Flow = struct {
     key: FlowKey,

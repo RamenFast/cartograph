@@ -16,18 +16,16 @@
 const std = @import("std");
 const flow = @import("flow.zig");
 const lens = @import("lens.zig");
+const focusmod = @import("focus.zig");
 
 const Str = flow.Str;
 const Addr = flow.Addr;
 const FlowKey = flow.FlowKey;
 
-/// What a Greeting/Rule is *about*. A tagged union (D19) so the target's kind stays
-/// explicit on the wire and in the UI — never flattened into one ambiguous key.
-pub const EntityKey = union(enum(u8)) {
-    host: Addr,
-    app: Str(64), // app/comm name (exe-path identity arrives with M3 enrichment)
-    asn: u32,
-};
+/// What a Greeting/Rule is *about* (D19). Defined in flow.zig (the leaf data layer) so the
+/// act ontology and `focus.zig` can both name it without an import cycle; re-exported here
+/// because the ontology is its original home in the docs.
+pub const EntityKey = flow.EntityKey;
 
 pub const GreetState = enum(u8) { unseen = 0, greeted = 1, ignored = 2 };
 
@@ -105,6 +103,10 @@ pub const UserState = union(enum(u8)) {
     profile: lens.Profile,
     lens_toggle: LensToggle,
     greeting: Greeting,
+    /// The shared cursor (focus.zig, R1). Travels this same parity frame so the human's window
+    /// and an agent watching the stream point at one place. Tag appended last → existing wire
+    /// values (profile=0/lens_toggle=1/greeting=2) are unchanged; `focus`=3 is additive.
+    focus: focusmod.Focus,
 };
 
 test "greeting carries state Identity cannot; ignored stays visible (D14)" {

@@ -153,9 +153,14 @@ pub const BpfCapturer = struct {
         const ev: *const CgEvent = @ptrCast(@alignCast(data.?));
         const obs = toObservation(ev);
         if (ev.newstate == @intFromEnum(TcpState.close) or ev.newstate == @intFromEnum(TcpState.time_wait)) {
+            // Report the death *and* evict it: the diag path removes on sweep
+            // (table.collectClosed), so the event path must too, or closed flows pile up
+            // in the table forever — a leak, and a producer-side parity break (the
+            // consumer is told "closed" while our own snapshot still carries the row).
             if (ctx.closed) |cl| cl.append(ctx.gpa, obs.key) catch {
                 ctx.err = error.OutOfMemory;
             };
+            if (ctx.table) |tbl| tbl.remove(obs.key);
         } else if (ctx.table) |tbl| {
             tbl.observe(obs, ctx.now_ms) catch |e| {
                 ctx.err = e;
@@ -217,6 +222,34 @@ test "CgEvent decodes an IPv6 event and a short-comm" {
     try testing.expectEqualSlices(u8, &ev.daddr, &obs.key.remote.bytes);
     try testing.expectEqual(TcpState.established, obs.state);
     try testing.expectEqualStrings("ssh", obs.comm); // null-terminated comm, trimmed
+}
+
+test "a close event both reports the death and evicts the row (no leak, S1)" {
+    const gpa = testing.allocator;
+    var table = FlowTable.init(gpa);
+    defer table.deinit();
+    var closed: std.ArrayList(FlowKey) = .empty;
+    defer closed.deinit(gpa);
+    var ctx: BpfCapturer.Ctx = .{ .gpa = gpa, .table = &table, .closed = &closed, .now_ms = 1000 };
+
+    // an ESTABLISHED event lands a row…
+    var est: CgEvent = std.mem.zeroes(CgEvent);
+    est.family = AF_INET;
+    est.newstate = @intFromEnum(TcpState.established);
+    est.sport = 44330;
+    est.dport = 443;
+    est.saddr = v4(.{ 192, 168, 1, 9 });
+    est.daddr = v4(.{ 140, 82, 121, 4 });
+    _ = BpfCapturer.onSample(&ctx, &est, @sizeOf(CgEvent));
+    try testing.expectEqual(@as(usize, 1), table.count());
+
+    // …and the matching CLOSE event must remove it again, not just report it.
+    var fin = est;
+    fin.newstate = @intFromEnum(TcpState.close);
+    _ = BpfCapturer.onSample(&ctx, &fin, @sizeOf(CgEvent));
+    try testing.expectEqual(@as(usize, 1), closed.items.len); // death reported
+    try testing.expectEqual(@as(usize, 0), table.count()); // and evicted — no leak
+    try testing.expect(ctx.err == null);
 }
 
 test "an unattributed event keeps pid 0 (the late-merge case)" {

@@ -63,11 +63,30 @@ once, appears everywhere.
   motion semantics (pulse/fade/bloom), the docked "Why" panel, drag-to-tag entities.
 - Unprivileged; it only *asks* `surveyor` to act (capture/block) over the socket.
 
-## Optional third expression — remote view (Elixir/Phoenix LiveView)
-Erlang/OTP 27 + Elixir are installed, so a **companion web view** is cheap and natural:
-read the same `surveyor` socket, model each flow as a GenServer, push the live map to a
-browser. Use case: watch a headless home-server's traffic from your phone. **Not
-required**, never the primary UI — a bonus that falls out of the architecture.
+## The shared-presence layer — `atlas` (Elixir/Phoenix LiveView/OTP) — *essential* (D9 amended 2026-06-19)
+The TUI and GTK are **single-observer**: one box, one person, one socket. But the north star is
+*"human talking to their AI looking at the screen, every step,"* and the real setting is
+**multi-substrate** — Ben + Claude + Nexus + agents from Opus to Gemma, sometimes a second
+person — all wanting to watch **one machine's truth at the same time.** A single local client
+can't express that; **many live, stateful, server-pushed observers of one state, each with
+presence** is *exactly* what BEAM/OTP/LiveView exists for. So `atlas` is not a phone bonus — it
+is the **shared-presence / distribution fabric**, a first-class peer of the local expressions
+for the *many-mind* case.
+
+- **Mechanism:** Erlang/OTP 27 + Elixir (installed). One supervised GenServer per flow; LiveView
+  pushes diffs to every connected observer (browser, phone, an AI's headless session) over
+  persistent connections. Fault-tolerant fan-out is the BEAM's home turf.
+- **Parity holds.** `atlas` is a *renderer*, not a second brain: it consumes the **same
+  view-model** the natives do — cleanest via the `surveyor serve --json` NDJSON feed
+  (AGENT-INTERFACE.md) — and invents no truth of its own. A capability still cannot exist in one
+  surface but not another, because they all read `libcartograph`'s projection.
+- **It stays off the hot path** (D4): BEAM does *fan-out*, not capture. Real-time still comes
+  from Zig + eBPF; `atlas` distributes what surveyor already produced.
+- **It is the home for "shared focus"** (RESEARCH.md R1): when the agent and the human point at
+  the *same* selection/zoom, the presence layer is where that shared cursor lives and broadcasts.
+
+Build status: `atlas/` is a scaffold today; the amendment makes it a committed milestone rather
+than a someday-maybe.
 
 ## Display-server strategy: great on X11 *and* Wayland (you said Wayland is coming)
 - **GTK4 is natively dual.** It speaks X11 and Wayland with zero special code — the GTK

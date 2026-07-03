@@ -51,13 +51,16 @@ pub const Scope = enum(u8) {
 };
 
 /// The scope a `user_state` change travels (D22). Profile + lens toggles are view-local
-/// (a viewport is not shared truth); a Greeting is `kept` (surveyor-owned, persisted).
-/// `session` is the reserved middle rung — nothing promotes to it yet (the future
-/// Shift-to-broadcast gesture would). Keeping this mapping here, in the view-model, means
-/// the TUI and GTK can never disagree about what a given change actually does.
+/// (a viewport is not shared truth); a Greeting is `kept` (surveyor-owned, persisted). A
+/// **Focus** is the first thing that actually uses the middle rung: a solo cursor is `view`,
+/// but a *shared* cursor is `session` — the session-wide focus every observer follows, which
+/// is exactly the co-observation mechanism R1 is built around (the `◍ session` glyph finally
+/// has a consumer). Keeping this mapping here, in the view-model, means the TUI, GTK, and the
+/// agent can never disagree about how far a given change reaches.
 pub fn scopeOf(us: ontology.UserState) Scope {
     return switch (us) {
         .profile, .lens_toggle => .view,
+        .focus => |f| if (f.shared) .session else .view,
         .greeting => .kept,
     };
 }
@@ -82,4 +85,8 @@ test "scope glyphs are distinct and escalate; the mapping matches D22" {
     try t.expectEqual(Scope.view, scopeOf(.{ .profile = .calm }));
     try t.expectEqual(Scope.view, scopeOf(.{ .lens_toggle = .{ .lens = .risk, .on = true } }));
     try t.expectEqual(Scope.kept, scopeOf(.{ .greeting = .{ .key = .{ .asn = 13335 } } }));
+
+    // Focus is the first real consumer of the middle rung: solo cursor = view, shared = session.
+    try t.expectEqual(Scope.view, scopeOf(.{ .focus = .{ .altitude = .orbit, .target = .machine, .shared = false } }));
+    try t.expectEqual(Scope.session, scopeOf(.{ .focus = .{ .altitude = .orbit, .target = .machine, .shared = true } }));
 }

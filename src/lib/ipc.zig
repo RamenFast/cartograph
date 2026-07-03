@@ -17,6 +17,7 @@ const Writer = std.Io.Writer;
 const flow = @import("flow.zig");
 const lens = @import("lens.zig");
 const ontology = @import("ontology.zig");
+const focusmod = @import("focus.zig");
 const Flow = flow.Flow;
 const FlowKey = flow.FlowKey;
 
@@ -298,6 +299,29 @@ fn readRuling(r: *Reader) !ontology.Ruling {
     return .{ .at_ms = at, .flow_key = key, .rule_id = rule_id, .verdict = verdict, .effect = effect };
 }
 
+fn writeFocus(w: *Writer, f: focusmod.Focus) Writer.Error!void {
+    try w.writeByte(@intFromEnum(f.altitude));
+    try w.writeByte(@intFromBool(f.shared));
+    try w.writeByte(@intFromEnum(std.meta.activeTag(f.target)));
+    switch (f.target) {
+        .machine => {},
+        .entity => |ek| try writeEntityKey(w, ek),
+        .flow => |fk| try writeKey(w, fk),
+    }
+}
+
+fn readFocus(r: *Reader) !focusmod.Focus {
+    const altitude: focusmod.Altitude = @enumFromInt(try r.takeByte());
+    const shared = (try r.takeByte()) != 0;
+    const target: focusmod.Target = switch (try r.takeByte()) {
+        0 => .machine,
+        1 => .{ .entity = try readEntityKey(r) },
+        2 => .{ .flow = try readKey(r) },
+        else => return error.InvalidFrame,
+    };
+    return .{ .altitude = altitude, .shared = shared, .target = target };
+}
+
 fn writeUserState(w: *Writer, us: ontology.UserState) Writer.Error!void {
     try w.writeByte(@intFromEnum(std.meta.activeTag(us)));
     switch (us) {
@@ -307,6 +331,7 @@ fn writeUserState(w: *Writer, us: ontology.UserState) Writer.Error!void {
             try w.writeByte(@intFromBool(lt.on));
         },
         .greeting => |g| try writeGreeting(w, g),
+        .focus => |f| try writeFocus(w, f),
     }
 }
 
@@ -319,6 +344,7 @@ fn readUserState(r: *Reader) !ontology.UserState {
             break :blk .{ .lens_toggle = .{ .lens = l, .on = on } };
         },
         2 => .{ .greeting = try readGreeting(r) },
+        3 => .{ .focus = try readFocus(r) },
         else => error.InvalidFrame,
     };
 }
@@ -538,6 +564,36 @@ test "user_state round-trips a profile switch and a lens toggle" {
         const us = (try readFrame(&r)).?.user_state;
         try t.expect(us.lens_toggle.on);
         try t.expectEqual(lens.Lens.endpoint, us.lens_toggle.lens);
+    }
+}
+
+test "user_state round-trips a focus (the shared cursor survives the wire, R1)" {
+    const t = std.testing;
+    var buf: [max_frame]u8 = undefined;
+
+    // a street-altitude focus on a specific flow, marked shared (the session cursor)
+    const key: FlowKey = .{ .proto = .tcp, .local = flow.Addr.v4(.{ 192, 168, 1, 9 }), .local_port = 5, .remote = flow.Addr.v4(.{ 1, 1, 1, 1 }), .remote_port = 443 };
+    {
+        const f: focusmod.Focus = .{ .altitude = .street, .target = .{ .flow = key }, .shared = true };
+        var w = Writer.fixed(&buf);
+        try sendUserState(&w, .{ .focus = f });
+        var r = Reader.fixed(w.buffered());
+        const us = (try readFrame(&r)).?.user_state;
+        try t.expect(us == .focus);
+        try t.expect(us.focus.eql(f)); // altitude, target flow, and shared all survive
+        try t.expectEqual(focusmod.Altitude.street, us.focus.altitude);
+        try t.expect(us.focus.shared);
+    }
+    // and an entity focus (region on an ASN), solo
+    {
+        const f: focusmod.Focus = .{ .altitude = .region, .target = .{ .entity = .{ .asn = 13335 } } };
+        var w = Writer.fixed(&buf);
+        try sendUserState(&w, .{ .focus = f });
+        var r = Reader.fixed(w.buffered());
+        const us = (try readFrame(&r)).?.user_state;
+        try t.expect(us.focus.target == .entity);
+        try t.expectEqual(@as(u32, 13335), us.focus.target.entity.asn);
+        try t.expect(!us.focus.shared);
     }
 }
 

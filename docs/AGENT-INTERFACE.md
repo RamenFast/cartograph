@@ -14,12 +14,52 @@ Every surface is a *renderer* over `libcartograph`, so none can drift from the o
 | surface | consumer | form | status |
 |---|---|---|---|
 | **human table** | a person at a TTY | colored, aligned, glyphs | ✅ `surveyor snapshot` |
-| **NDJSON** | agents, scripts, `jq`, kids | one flow = one JSON object = one line | ✅ `surveyor snapshot --json` |
+| **NDJSON (snapshot)** | agents, scripts, `jq`, kids | one flow = one JSON object = one line | ✅ `surveyor snapshot --json` |
+| **NDJSON (stream)** | an agent *watching over time* | one event = one line (`hello`/`flow`/`closed`/`tick`) | ✅ `surveyor serve --json` |
+| **self-description** | a model with zero prior training | the whole contract as one JSON doc | ✅ `surveyor --schema` |
 | **binary IPC** | the GUI/TUI hot path | length-prefixed frames | ✅ `surveyor serve` |
 
 **Rule (the Unix `isatty` move):** pretty when stdout is a terminal; structured when it's a
-pipe. Today the structured form is explicit (`--json`); auto-detection on a pipe is a near
-follow-up. A real Unix program never makes you fight color codes in a pipeline.
+pipe. ✅ **Now automatic** — `surveyor snapshot` emits NDJSON the moment stdout isn't a TTY
+(tcgetattr/ENOTTY); `--json` still forces it. A real Unix program never makes you fight color
+codes in a pipeline.
+
+## The live watch (the north-star surface)
+
+> *"Human talking to their AI looking at the screen, seeing an accurate representation of what's
+> happening every step of the way."* The agent should not poll a Polaroid — it should watch the
+> **same live view-model the GUI renders**. That is `serve --json`: the text twin of the binary
+> IPC, byte-for-byte the same `Flow` data, one self-identifying event per line.
+
+```bash
+surveyor serve --json | jq -c 'select(.ev=="flow" and .fresh)'   # narrate new connections live
+surveyor serve --json --socket /run/user/$UID/cg.sock            # …or watch a headless box remotely
+surveyor --schema | jq '.enums'                                  # learn every vocabulary, zero training
+```
+
+Event shapes: `{"ev":"hello","proto_version":2}` · `{"ev":"flow", …every snapshot field…}` ·
+`{"ev":"closed", proto/local/remote key}` · `{"ev":"tick","at_ms":…,"flows":N}` (a heartbeat
+even when nothing changed) · `{"ev":"focus","altitude":…,"target":…,"desc":…}` (the shared
+cursor — below). The `flow` event carries the **identical** fields as `snapshot --json`, so code
+that parses one parses the other — filter on `.ev`.
+
+### The shared cursor — `focus` (R1)
+
+> *"Looking at the screen"* implies a **thing being looked at**. `focus` is the agent's
+> equal-fidelity (JSON) rendering of the *same* cursor the human's window holds — what is in view
+> (`target`: machine/entity/flow) and at what altitude (`orbit→region→street→ground`). `desc` is
+> the identical plain-language line the human's "Why" header shows, so the agent narrates from one
+> source. Emitted on connect (inherit-the-cursor); it moves as navigation changes.
+
+```bash
+surveyor serve --json | jq -c 'select(.ev=="focus") | {altitude, target, desc}'
+# {"altitude":"orbit","target":"machine","desc":"the whole machine (orbit)"}
+```
+
+**Read today; move next.** The agent can *see* the cursor now. *Moving* it (the agent says "look
+at the `:631` listener" and the human's screen follows) needs the duplex command channel — see
+the command surface in the roadmap, and [RESEARCH.md](RESEARCH.md) R1/R3. The type, the wire
+frame, and the scope semantics (a `shared` cursor is `session`-scoped — D24) are already in place.
 
 ## NDJSON schema (stable contract)
 
@@ -70,9 +110,14 @@ An agent does the exact same thing — shell out, parse lines, reason. No integr
 
 ## Roadmap for the surface
 - ✅ `snapshot --json` (NDJSON projection of the live view-model).
-- ⬜ `serve --json` — an NDJSON **event stream** (flow-upsert / closed / tick as lines), the
+- ✅ `serve --json` — an NDJSON **event stream** (hello / flow / closed / tick as lines), the
   text twin of the binary IPC, for agents that want to watch over time.
-- ⬜ auto-structured-on-pipe (isatty); `--schema`; stable verb grammar (`watch`, `why`, `block`)
-  with `--json` everywhere; commands *in* (set-filter, deep-capture) by flag/stdin.
+- ✅ auto-structured-on-pipe (isatty); ✅ `--schema` (the self-describing contract).
+- ⬜ **The command surface (the next real step):** an agent can *read* everything now but cannot
+  yet *act*. A stable verb grammar (`watch`, `why`, `select`, `block`) with `--json` everywhere,
+  and commands *in* (set-filter, set-profile, deep-capture) by flag/stdin. This is where the act
+  ontology (ONTOLOGY.md) stops being reserved and starts paying rent — see [RESEARCH.md](RESEARCH.md).
 - ⬜ When enforcement lands (M6): `block`/`allow`/`throttle` verbs return a JSON `Ruling` so an
   agent can act and *read back what it did* — visible, undoable, legible (D14, ONTOLOGY.md).
+- ⬜ **Shared focus** — the agent and the human looking at *the same selection/zoom*, so "what
+  the AI sees" === "what's on screen." The deepest form of the north star; [RESEARCH.md](RESEARCH.md) R1.

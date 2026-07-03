@@ -4,18 +4,27 @@ Two components on opposite sides of a privilege boundary, talking over a lean lo
 socket. This is the OpenSnitch/Little-Snitch split and it matters: capture needs
 `CAP_BPF`/`CAP_NET_RAW`; the UI must never be privileged.
 
-> **Note (M2 reality):** the diagram below is the *target*. The frontend is a native-Zig
-> **TUI** over `libcartograph`; the **GTK** expression lands in M4 and the Elixir/LiveView
-> remote view is an *optional* extra (D9), not the primary UI. **The Unix-socket boundary is
-> now live** (`surveyor serve --socket <path>` ⇄ `cartograph --ipc --socket <path>`) — the
-> same `ipc` codec over a real socket, proven byte-identical to the pipe in tests
-> (`usock.zig`). Capture is still **unprivileged** today (inet_diag + /proc); the remaining
-> half of the boundary is the **eBPF capture source** behind the `Capturer` seam, which is
-> what makes `setcap` load-bearing (see Privilege model below). See ROADMAP M1/M2.
+> **Note (M2 reality):** the diagram below is the *target*. There are **two live native
+> frontends today** over `libcartograph` — the Zig **TUI** *and* a **GTK4 window** (built
+> incrementally every step, not deferred to M4 — D21). These are the **single-observer** local
+> expressions (one box, one person). The **`atlas` BEAM/LiveView layer is the multi-observer
+> fabric** — *essential, not optional* (D9 amended 2026-06-19): it fans one surveyor stream out
+> to many simultaneous live observers (your browser, your phone, your AI), which is what the
+> "human + their AI(s) watching the same screen, every step" vision actually requires. It is a
+> renderer over the same view-model (it consumes `serve --json`), so parity still holds; it is
+> *scaffold-only today*. **The Unix-socket boundary is now live**
+> (`surveyor serve --socket <path>` ⇄ `cartograph --ipc --socket <path>`) — the same `ipc`
+> codec over a real socket, proven byte-identical to the pipe in tests (`usock.zig`,
+> `parity.zig`). Capture is still **unprivileged** today (inet_diag + /proc); the **eBPF
+> capture source** behind the `Source` seam is built and its live attach is **verified** under
+> `setcap` (D-handoff), which is what makes `setcap` load-bearing (see Privilege model below).
+> A third, **agent-facing** surface is live too: `snapshot --json`, `serve --json` (the NDJSON
+> event twin of the binary IPC), and `--schema` (AGENT-INTERFACE.md). See ROADMAP M1/M2.
 
 ```
 ┌──── frontends (UNPRIVILEGED) · render the same libcartograph view-model ──────────────────┐
-│  TUI (Zig+libvaxis later) · GTK4 (M4) · optional Elixir/LiveView remote view (D9)          │
+│  LOCAL/1-observer: TUI (Zig) · GTK4 (live, D21) · agents (NDJSON)                           │
+│  MANY-observer fabric: atlas — Elixir/Phoenix LiveView/OTP (essential — D9 amended)         │
 │  semantic-zoom map (orbit→region→street→ground) · "Why" panel · filters · timeline · logos │
 └────────────────────────────────────▲─────────────────────────────────────────────────────┘
                                      │  libcartograph (Zig view-model: flow/lens/scoring/identity)
@@ -80,17 +89,32 @@ socket. This is the OpenSnitch/Little-Snitch split and it matters: capture needs
 - **Terminal** (Zig + libvaxis) and **GTK** (GTK4 + zig-gobject) link `libcartograph`
   directly and render the same lenses, risk rings, and verbs. GTK is GPU-accelerated and
   X11+Wayland-native; the TUI shows real logos via the kitty graphics protocol.
-- **Optional remote view** (Elixir/Phoenix LiveView, OTP 27 installed): one GenServer per
-  flow; LiveView pushes diffs to a browser — for watching a headless box from your phone.
+- **`atlas` — the shared-presence / distribution layer** (Elixir/Phoenix LiveView/OTP 27,
+  **essential**, D9 amended 2026-06-19): one supervised GenServer per flow; LiveView pushes
+  diffs to *many* simultaneous observers over persistent connections. This is what BEAM is
+  *for*, and it's the architectural answer to the multi-substrate north star — the human's
+  browser, their phone, **and one or more AI agents** all watching one machine's truth live,
+  with presence, every step. It consumes the same view-model surveyor emits (the `serve --json`
+  feed), so it invents no truth of its own — parity by construction holds. (BEAM stays *off*
+  the capture hot path — D4; its job is fan-out, not capture.)
 - "Explain this flow / is this normal?" uses the **local ollama** model (offline); a cloud
   LLM is strictly opt-in.
 
 ## IPC — lean by design (honors "minimal glue / fast")
-- Unix domain socket. **Up:** event frames `[u32 len][u8 type][payload]` (flow-new,
-  flow-update, flow-closed, dns, process). **Down:** command frames (start-deep-capture,
-  set-filter, resolve-identity). Encoding: packed structs / CBOR — **not** JSON-over-HTTP.
-- Rationale: BEAM parses binaries extremely well; avoids a serialization tax on a hot
-  event stream; keeps surveyor dependency-free.
+- Unix domain socket, length-prefixed frames `[u32 len][u8 type][payload]`, little-endian,
+  forward-compatible (an unknown type is skipped, not fatal — `ipc.zig`). **As built (M2):**
+  `hello · flow_upsert · flow_closed · tick · bye`, plus the act-ontology frames reserved
+  thin — `user_state` (profile/lens/greeting, **bidirectional**, D22) · `rule` · `reading` ·
+  `ruling` (D19/ONTOLOGY.md). **Down** today is just `user_state`; the M2/M6 command frames
+  (start-deep-capture, set-filter, the `rule` write path) extend the same enum additively.
+- Rationale: a hot event stream shouldn't pay a JSON/HTTP serialization tax; the binary codec
+  keeps surveyor dependency-free and is decoded by the Zig frontends directly. For agents and
+  scripts the **same view-model** is projected as NDJSON (`serve --json`) — text where text is
+  wanted, bytes where speed is wanted, one truth behind both (AGENT-INTERFACE.md).
+  *(Historical note: the original rationale cited BEAM's binary pattern-matching; D9 moved BEAM
+  off the capture hot path to the `atlas` distribution layer — essential, not optional (D9
+  amended 2026-06-19) — so the **hot-path** consumer today is Zig. `atlas` consumes the NDJSON
+  feed, not these raw frames.)*
 
 ## Privilege model
 - `surveyor` runs with file capabilities, **not** root:

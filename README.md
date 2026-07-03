@@ -57,16 +57,21 @@ renderer — see [docs/FRONTENDS.md](docs/FRONTENDS.md)):
   - **GTK** — **a live GTK4 window today** (GTK4 linked by direct C FFI from Zig; GPU-
     accelerated, **X11 and Wayland**-native), built incrementally alongside every feature
     (D21). zig-gobject's generated bindings remain a later drop-in swap (D10).
-- **`atlas/`** — *optional* remote view in **Elixir/Phoenix LiveView** (OTP 27 installed)
-  for watching a headless box from your phone. Bonus, not required.
+- **`atlas/`** — the **shared-presence / distribution layer** in **Elixir/Phoenix LiveView**
+  (OTP 27 installed). *Essential, not a bonus:* the TUI/GTK are single-observer (one box, one
+  person); `atlas` is how **one machine's truth reaches many live observers at once** — your
+  browser, your phone, **and your AI(s)** — each with presence, server-pushed, every step. That
+  multi-substrate co-observation *is* the north star ("human talking to their AI looking at the
+  screen"). It's a renderer over the same view-model (it consumes `surveyor serve --json`), so
+  parity holds and BEAM stays off the capture hot path. Scaffold today; a committed milestone.
 
 All frontends speak a lean length-prefixed **binary** protocol over a Unix socket — no
 JSON/HTTP tax. Power-tool survey + language trade-offs: **[docs/STACK.md](docs/STACK.md)**.
 
 ## What already works (proven on this machine)
 
-A pure-Zig spike (`surveyor/src/main.zig`) does live socket→process attribution from
-`/proc`, unprivileged, with zero dependencies:
+A pure-Zig spike (`experiments/attribution-spike.zig`) does live socket→process
+attribution from `/proc`, unprivileged, with zero dependencies:
 
 ```
 PID    COMM             STATE       LOCAL                  REMOTE
@@ -79,6 +84,13 @@ PID    COMM             STATE       LOCAL                  REMOTE
 - **20 ms** to scan all of `/proc`, build the socket→PID map, and parse the TCP table.
 - **772 KB** peak RAM · **3.7 MB** static binary · **0** runtime dependencies.
 
+*(Those three numbers are the **spike's**, built `ReleaseSmall`. The shipped `surveyor`
+is the productised path — `inet_diag` netlink instead of `/proc/net/tcp` text, larger I/O
+buffers — and a debug build is ~18 MB; a `ReleaseSmall` surveyor and its RSS will be
+re-measured and quoted here once M3 settles. The default TUI is still 0-dep and
+unprivileged; the **eBPF** path links `libbpf` and needs `setcap`, and the **GTK** frontend
+links `gtk4/glib` — neither is zero-dep, and the README's capability table marks them so.)*
+
 This is the no-privilege *fallback* path; the privileged eBPF path (next milestone) adds
 short-lived-connection capture and the rows currently shown as `?` (root/other-user
 sockets). A second spike (`experiments/sysmon.zig`) reads your **Radeon live** — busy %,
@@ -90,7 +102,7 @@ stream. See **[docs/EXPERIMENTS.md](docs/EXPERIMENTS.md)**.
 ```bash
 # Zig 0.16 is vendored in toolchain/ (no system install needed)
 ./toolchain/zig build                 # build surveyor + cartograph into zig-out/bin
-./toolchain/zig build test            # run the unit tests (32 green)
+./toolchain/zig build test            # run the unit tests (42 green; 46 with -Dbpf=true)
 ./toolchain/zig build run             # the live TUI (in-process capture)
 
 # the architecture for real — capture core streams binary IPC to the frontend:
@@ -100,8 +112,11 @@ stream. See **[docs/EXPERIMENTS.md](docs/EXPERIMENTS.md)**.
 ./zig-out/bin/surveyor serve --socket /tmp/cg.sock &
 ./zig-out/bin/cartograph --ipc --socket /tmp/cg.sock
 
-./zig-out/bin/surveyor snapshot       # one-shot human-readable attributed table
-./zig-out/bin/surveyor snapshot --json | jq   # the agent/Unix surface (NDJSON)
+# the agent / Unix surface — legible to any model from Opus to Gemma-12b (docs/AGENT-INTERFACE.md):
+./zig-out/bin/surveyor --schema | jq            # self-describe: every field, event, vocabulary
+./zig-out/bin/surveyor snapshot       # one-shot table — pretty at a TTY, NDJSON in a pipe
+./zig-out/bin/surveyor snapshot | jq          # auto-NDJSON on a pipe (no flag needed)
+./zig-out/bin/surveyor serve --json | jq -c 'select(.ev=="flow")'  # WATCH the live stream
 
 # eBPF capture (M2, opt-in). One script builds it, grants caps, and tests it:
 ./scripts/try-ebpf.sh                 # asks for your password once (setcap only)
@@ -142,7 +157,7 @@ cartograph/
 │   └── gtk/main.zig    ← the GTK4 frontend: live flow window over the IPC socket
 ├── scripts/            ← try-ebpf.sh (eBPF + caps) · try-gtk.sh (build + open the window)
 ├── man/cartograph.1     ← man page draft (Bloom UX) — renders clean
-├── atlas/               ← optional Elixir/LiveView remote view (scaffold pending)
+├── atlas/               ← the shared-presence layer: Elixir/LiveView multi-observer fan-out (essential; scaffold)
 ├── toolchain/           ← vendored Zig 0.16.0 (gitignored)
 ├── experiments/
 │   ├── attribution-spike.zig  ← the original /proc attribution probe (E2)

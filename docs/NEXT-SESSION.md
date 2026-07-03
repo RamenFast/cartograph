@@ -1,7 +1,54 @@
 # Cartograph — next session (start here)
 
-> Written at the end of the M1 + critique-response session (2026-06-17). Read this first, then
-> ONTOLOGY.md and STATE.md. Goal of next session: **start M2 on the frame the critique gave us.**
+> Updated 2026-06-19 (the teardown + agent-surface + R1 session). New here? Read [docs/README.md](README.md)
+> (the index + status map) first, then this. Everything below builds + tests green:
+> **`zig build test` = 50, `-Dbpf=true` = 54.**
+
+## ⭐ NEXT SESSION STARTS HERE — finish R1 (the shared cursor)
+
+The `Focus` **seam is built** this session (D24, `src/lib/focus.zig`): the cursor is first-class
+view-model state on the `user_state` parity frame, with an equal-fidelity JSON projection for
+agents (`focus` event on `serve --json`, in `--schema`). What remains is three concrete builds,
+in this order — each is a clean, scoped starting point:
+
+1. **Renderer wiring — both frontends in one step (don't split, or you re-break render-parity R5).**
+   TUI + GTK: display the active cursor (the `Focus.describe()` line in the header, next to the
+   profile/lens row) and let the user *move* it — keys for altitude (zoom in/out) and selecting a
+   row → `SessionState.setFocus` → send `user_state{focus}` upstream (the path profile/lens already
+   use). This is the "GTK every step" task (D21) and it makes the cursor visible.
+2. **Duplex JSON command channel (R3) — let the agent *move* the cursor, not just read it.** Today
+   `serve --json` is read-only (one-way pipe). Add an upstream NDJSON command on the socket
+   (`serve --json --socket`): the agent writes a line like `{"cmd":"focus","altitude":"region",
+   "target":"entity","entity_kind":"asn","entity":"13335"}`, surveyor parses it to a `UserState`
+   and applies it. This is the first agent *write* verb — wire it generically so `set-profile` /
+   `lens` come free, and so the act ontology's `Ruling` has its first consumer. **No auth/consent
+   handshake** (D25 — full-trust home environment): the agent writes, it applies, everyone sees it,
+   it's undoable. The safety budget goes into visibility + reversibility (D14), not gates.
+3. **Multi-client broadcast (R1 / atlas) — make a `shared` cursor actually shared.** Surveyor today
+   serves one client at a time (`serveSocket` accepts then blocks in `streamLoop`). For a `shared`
+   focus to reach every observer, surveyor needs a client registry + fan-out. This is where the
+   **`atlas` BEAM layer** earns its keep (D9 amended — essential, not optional): the natural home
+   for many-observer presence. Start small (a Zig multi-client accept loop broadcasting
+   session-scoped `user_state`), then let `atlas` own the fan-out + presence.
+
+`scopeOf(.focus)` already returns `session` when `shared` — so the design is settled; these are
+builds, not decisions. See [RESEARCH.md](RESEARCH.md) R1/R3 and DECISIONS **D24**.
+
+## What this session (2026-06-19) did
+- **A full critique-and-improve pass** (Ben's `/goal`). Audited code + docs with two agents,
+  fact-checked claims, then **shipped 9 fixes** — see "Critique-response patches" below.
+- **The agent interface went from read-only/poll-only to a live, self-describing watch surface:**
+  `serve --json` (NDJSON event stream — the text twin of the binary IPC, so an agent watches the
+  same live view-model the GUI renders), `--schema` (the self-describing contract, generated from
+  the enums so it can't drift), and **isatty** auto-NDJSON on a pipe. (AGENT-INTERFACE.md.)
+- **R1 shared-focus seam built** (D24, above).
+- **`atlas` reframed essential** (D9 amended, per Ben): the BEAM/LiveView **shared-presence /
+  distribution layer** — the multi-observer fabric for human + their AI(s) watching one machine at
+  once — is *not* an optional remote view. It is the home of R1's broadcast half.
+- **Fixed a real eBPF bug** (closed flows never evicted from the table — leak + producer-side
+  parity break) and added the regression test.
+- **Honesty re-baseline:** the four mutually-inconsistent test counts → the truth (50/54); the
+  spike perf numbers relabeled as the spike's; stale path + zero-dep caveats fixed.
 
 ## Where we are
 - **User-state ownership landed (2026-06-18, D22).** The `user_state` frame is now
@@ -16,7 +63,7 @@
   round-trip), and the live GTK window driving + rendering surveyor's echo. Also landed
   **`ipc.FrameStream`**: the length-prefixed read-side reassembly was hand-rolled in three
   consumers (TUI/GTK/surveyor); it now has one owner in `ipc.zig` (the write side already did),
-  with an oversized-frame guard. `zig build test` = **41 green**, `-Dbpf=true` = **44**.
+  with an oversized-frame guard. *(Test count at that point was 41/44; it is **50/54** now — see top.)*
 - **The first GTK window shipped** (2026-06-18, D21). `src/gtk/main.zig` (build `-Dgtk`,
   launch `./scripts/try-gtk.sh`) opens a live attributed-flow window over the
   `surveyor serve --socket` IPC: same binary frames, same `FlowTable`, same design-language
@@ -28,7 +75,7 @@
   `tp_btf/inet_sock_set_state`, `-Dbpf=true`) behind the `Source` seam; the Unix-socket
   privilege boundary; the act ontology (D19) + four IPC frames; the `?`-flow answer
   (`service`/`exposure`); and the full test discipline (golden frames, in-process↔IPC parity,
-  eBPF decode). `zig build test` = 32 green; `-Dbpf=true` = 35. **eBPF live-attach VERIFIED**
+  eBPF decode). *(Test count at that point was 32/35; **50/54** now.)* **eBPF live-attach VERIFIED**
   2026-06-18 (Ben ran `scripts/try-ebpf.sh` — caps stuck, program loaded, no fallback). Caveat:
   eBPF as-built is an event *augmenter* (sees state transitions, not the existing table), so the
   M3 hybrid fusion is what makes it useful in the normal view. See ROADMAP M2/M3.

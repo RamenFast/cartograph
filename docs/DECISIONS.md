@@ -3,10 +3,13 @@
 Locked choices with rationale. Each can be revisited, but the default is to honor these.
 
 ## D1 — Language: Zig (core) + Zig frontends — *(UI half SUPERSEDED by D9)*
-> **Superseded (UI):** D9 makes the **frontends Zig** (TUI + GTK over `libcartograph`) and
-> demotes Elixir/Phoenix LiveView to an **optional remote view**. Read D1 for the *core*
-> decision (Zig on the hot path); read **D9** for the frontend decision. M1 shipped the
-> Zig view-model + a native Zig TUI; no Elixir is in the build.
+> **Superseded (UI):** D9 makes the **local frontends Zig** (TUI + GTK over `libcartograph`) and
+> moves Elixir/Phoenix LiveView off the *primary local UI* role — **but D9 was amended
+> 2026-06-19 (Ben): `atlas` (BEAM/LiveView) is the *essential shared-presence / distribution
+> layer*, not an optional bonus** — the multi-observer fabric for human + their AI(s) watching
+> one machine's truth at once. Read D1 for the *core* decision (Zig on the hot path); read **D9
+> + its amendment** for the full frontend story. M1/M2 shipped the Zig view-model + native Zig
+> TUI + GTK; `atlas` is a committed milestone, scaffold today.
 
 Esoteric *and* optimal. The app is a zero-GC privileged hot path (Zig) + a soft-real-time
 many-entity live UI. The privilege boundary maps onto a clean producer/consumer seam.
@@ -65,8 +68,28 @@ provisional — rename freely.
 You want a terminal expression AND a GTK expression with identical capability. All logic
 lives in **`libcartograph`** (Zig); each UI is a thin renderer → **parity by construction**.
 Terminal = libvaxis (kitty-graphics logos); GTK = GTK4 via zig-gobject, GPU-accelerated,
-X11+Wayland native. **Elixir/LiveView is demoted to an optional remote view** (supersedes
+X11+Wayland native. ~~**Elixir/LiveView is demoted to an optional remote view**~~ (supersedes
 the Elixir-primary half of D1). See FRONTENDS.md.
+
+**Amended 2026-06-19 (Ben) — `atlas` is essential, not optional.** Calling the BEAM/LiveView
+layer an "optional remote view" was *precedent talking* ("keep it lean, one runtime, no
+glue"). It mis-read the role. The two native frontends (TUI, GTK) are **single-observer**:
+one box, one person, one socket. But the north star is *"human talking to their AI looking at
+the screen, every step,"* and the lived reality is **multi-substrate** — Ben + Claude + Nexus +
+agents from Opus to Gemma, sometimes a second person, all wanting to watch **one machine's
+truth at the same time.** That is *exactly* what BEAM/OTP/Phoenix LiveView is for: many live,
+stateful, server-pushed observers of one state, each with presence. So `atlas` is the
+**shared-presence / distribution fabric** — the layer that makes *co-observation* real — not a
+phone bonus. Architecture: **surveyor** (Zig) is the single privileged producer of truth;
+**atlas** (BEAM) multiplexes it to many observers (browser, phone, AI). It consumes the same
+view-model stream the native frontends do — cleanest via the new `serve --json` NDJSON feed
+(AGENT-INTERFACE.md) — so **parity by construction still holds** (atlas is a renderer over
+`libcartograph`'s projection, inventing no truth of its own). This makes the BEAM layer a
+**first-class peer** of the TUI/GTK expressions for the *many-mind* case, while the locals stay
+the answer for the *one-box hot path*. It does **not** re-promote BEAM onto the capture hot path
+(D4 stands: real-time comes from Zig + eBPF). It re-frames BEAM as the **fan-out**, which is its
+real strength. Build status: `atlas/` is still a scaffold; this amendment makes it a committed
+milestone (see RESEARCH.md R1 — shared focus — which this layer is the home for).
 
 ## D10 — GTK binding: direct C FFI now; zig-gobject the eventual binding (Vala fallback)
 zig-gobject keeps the GTK app Zig-native and links libcartograph with no glue (proven by
@@ -224,6 +247,57 @@ D22 data-flow, so "configurable scope" later is a scope tag + this glyph, not ne
 **Scoped now (D23):** the *ambient indicator* + the vocabulary. The *promotion gesture*
 (Shift-to-broadcast) and the live `●` on a greeting/rule write land with the docked "Why" panel /
 the Greeting implementation (M3). See DESIGN-LANGUAGE §9.
+
+## D24 — Focus is shared view-state: the cursor the human *and* the agent both hold
+Per Ben (2026-06-19), the first build toward RESEARCH.md **R1**. The north star — *"human talking
+to their AI looking at the screen, every step"* — requires a **thing being pointed at** that is
+shared and rendered at equal fidelity to every observer. Decision: **focus is first-class
+view-model state**, not a renderer's private selection. `src/lib/focus.zig` defines `Focus` =
+`Altitude` (orbit/region/street/ground — the VISION zoom *is* the level of detail) + `Target`
+(machine/entity/flow, typed by altitude) + `shared`. It travels the **same `user_state` parity
+frame** as profile/lens (D22), so the human's window and an agent watching the stream point at one
+place — *parity by construction extends to the cursor.* **Ben's framing:** the agent's UI is a
+*different rendering* (JSON) of the *same* state — UI/UX principles transfer, the vision stays
+alive; so `Focus` ships with both a `describe()` line (one source for the human "Why" header and
+the agent's narration) and a `focus` JSON event on the agent surface (`serve --json`, `--schema`).
+
+**The scope payoff:** a solo focus is `view`-scoped; a **`shared` focus is `session`-scoped** —
+which makes D23's reserved `◍ session` rung *real* (its first consumer) and is the literal
+mechanism of co-observation. Shared-cursor **broadcast** to many clients is surveyor/`atlas` work
+(D9 amended) and lands next; the type + the seam are built now so it extends a coherent shape.
+**Built now (D24):** the type (tested: consistency, describe, eql), the `UserState.focus` wire
+round-trip, `SessionState.focus` + `apply`, `scopeOf(.focus)`, and the agent's JSON projection.
+**Deferred:** renderer display + move-the-cursor keybinds (both frontends together, to respect
+render-parity R5), the duplex JSON command channel (R3), and multi-client broadcast (R1/atlas).
+
+## D25 — Full-trust home computing: the governing stance for agent action
+Per Ben (2026-06-19), answering the open R1 question *"when does the agent get to move the
+human's eyes, and how is that consent-ful rather than a hijack?"* — **the question was the wrong
+frame.** Cartograph's setting is a **home PC, full-trust computing environment** — *a science
+experiment.* On a machine you own, the agent is a **co-inhabitant**, not a threat to gate against.
+So the agent's action surface (move the shared cursor, switch lenses/profile, drill in, and
+eventually `block`/`throttle`) gets **no permission-negotiation layer**: the agent writes a
+command and it *applies.*
+
+This is not "no safety" — it's safety by the **D14 mechanism instead of by gating**: every act is
+**visible** (it shows on the map / the stream), **reversible** (undoable map objects), and
+**honest** (the consequence is decomposed, not hidden). Friction is reserved for the genuinely
+*destructive-and-irreversible* — the Android-recovery-screen model (VISION.md): named in plain
+language, made *deliberately* hard to trigger, always recoverable — and it is **identical for the
+human and the agent.** The agent isn't asked "may I?"; both are held to "is this visible and
+undoable?" That is the *door, not club* standard applied to agency itself: trust is the default,
+literacy and reversibility are the guardrails.
+
+**Why this fits the mission, not just the convenience:** the whole thesis is *complete trust with
+machine vision* and *re-democratizing technical literacy* — "the wiring diagram came with the
+fridge and you were curious enough to read it." Permission-gating every agent action is exactly
+the gatekeeping (the *club*) the project exists to push back on. Full-trust is the experiment.
+
+**Scope of the trust model:** this governs the **local, single-owner** environment (your box, your
+agents). A hosted/multi-tenant deployment, if one ever exists, is a *different* trust model and a
+separate decision — D25 does not extend to it. **Concrete consequence (R3):** build the duplex
+command channel as *"agent writes → it applies → everyone sees it → it's undoable,"* with **no
+auth/consent handshake** — the safety budget goes into visibility + reversibility (D14), not gates.
 
 ---
 

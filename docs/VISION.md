@@ -77,6 +77,15 @@ Fast, honest, and quiet. It should make a curious person say *"oh — so THAT's 
 laptop is doing"* within ten seconds of opening it, then reward them all the way down to
 the byte when they want it. Beauty in service of truth, not decoration.
 
+**The governing stance: full-trust home computing — a science experiment (DECISIONS D25).** This
+is your own machine, and the AI looking at the screen with you is a **co-inhabitant, not a threat
+to gate against.** The agent acts *freely* — it moves the shared cursor, switches lenses, drills
+in — because trust is the default on a box you own. Safety isn't a permission prompt ("may the AI
+act?"); it's the design language itself: every act is **visible, reversible, and honest**, and the
+only friction is reserved for the genuinely destructive-and-irreversible — *identical for the human
+and the agent.* Permission-gating every move is the gatekeeping (the *club*) this project exists to
+push back on; full-trust co-observation is the experiment we're actually running.
+
 ### The deeper why — consistency, and the wiring diagram in the fridge
 
 Honest danger only *teaches* when it's **consistent and standardized**. The black-and-red

@@ -19,7 +19,7 @@ cartograph/
 ├── man/            ← man pages (installed by the build)
 ├── experiments/    ← throwaway probes / proofs (named, dated in EXPERIMENTS.md)
 ├── assets/         ← icons, logo packs, glyphs (logo-cache is gitignored)
-├── atlas/          ← optional Elixir/LiveView remote view (scaffold; D9 = not primary)
+├── atlas/          ← shared-presence layer: Elixir/LiveView multi-observer fan-out (essential, D9 amended; scaffold)
 └── toolchain/      ← vendored Zig 0.16.0 (gitignored; re-fetch via bootstrap)
 ```
 

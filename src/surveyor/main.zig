@@ -45,9 +45,13 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (std.mem.eql(u8, cmd, "serve")) {
-        if (sock_path) |p| try serveSocket(gpa, io, p, want_bpf) else try serve(gpa, io, want_bpf);
+        if (as_json) {
+            if (sock_path) |p| try serveSocketJson(gpa, io, p, want_bpf) else try serveJson(gpa, io, want_bpf);
+        } else if (sock_path) |p| try serveSocket(gpa, io, p, want_bpf) else try serve(gpa, io, want_bpf);
     } else if (std.mem.eql(u8, cmd, "snapshot")) {
         try snapshot(gpa, io, as_json, want_bpf);
+    } else if (std.mem.eql(u8, cmd, "--schema") or std.mem.eql(u8, cmd, "schema")) {
+        try printSchema(io);
     } else if (std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "help")) {
         try usage(io);
     } else {
@@ -118,9 +122,15 @@ fn usage(io: std.Io) !void {
         \\surveyor — cartograph capture core
         \\
         \\usage:
-        \\  surveyor snapshot [--json]      one-shot attributed flow table (NDJSON with --json)
-        \\  surveyor serve                  stream live IPC frames to stdout (pipe to a frontend)
+        \\  surveyor snapshot [--json]      one-shot attributed flow table
+        \\                                  (auto-NDJSON when stdout is a pipe; force with --json)
+        \\  surveyor serve                  stream live binary IPC frames to stdout (pipe to a frontend)
+        \\  surveyor serve --json           stream the live view-model as NDJSON events
+        \\                                  (hello/flow/closed/tick lines — the agent's live watch)
         \\  surveyor serve --socket <path>  serve frames over a Unix socket (the daemon boundary)
+        \\  surveyor --schema               print the machine-readable contract of every surface
+        \\
+        \\flags: --bpf (use the eBPF source if caps allow)  --socket <path>  --json
         \\
     );
     try w.flush();
@@ -151,10 +161,18 @@ fn snapshot(gpa: std.mem.Allocator, io: std.Io, as_json: bool, want_bpf: bool) !
     defer gpa.free(flows);
 
     var buf: [128 * 1024]u8 = undefined;
-    var fw = std.Io.File.stdout().writer(io, &buf);
+    const stdout = std.Io.File.stdout();
+    var fw = stdout.writer(io, &buf);
     const w = &fw.interface;
 
-    if (as_json) {
+    // The Unix `isatty` move (AGENT-INTERFACE.md): pretty for a human at a TTY, structured
+    // NDJSON the moment stdout is a pipe — so `surveyor snapshot | jq` just works, no flag
+    // to remember. `--json` still forces it (e.g. when writing to a file). tcgetattr returns
+    // ENOTTY on anything that isn't a terminal, which is exactly the isatty test.
+    const stdout_is_tty = if (std.posix.tcgetattr(stdout.handle)) |_| true else |_| false;
+    const emit_json = as_json or !stdout_is_tty;
+
+    if (emit_json) {
         // NDJSON: one flow per line. No color, no header — pure, pipeable data.
         for (flows) |f| {
             try cartograph.json.writeFlow(w, f);
@@ -374,4 +392,88 @@ fn serveSocket(gpa: std.mem.Allocator, io: std.Io, path: []const u8, want_bpf: b
         // write error or `error.Closed`; either way, just wait for the next.
         streamLoop(gpa, io, &fw.interface, cfd, want_bpf) catch {};
     }
+}
+
+/// The NDJSON event loop — the text twin of `streamLoop`'s binary frames (AGENT-INTERFACE
+/// §"serve --json"). Same view-model, same 1 Hz cadence, emitted as one self-identifying
+/// JSON object per line so an agent watches the *exact same live truth* the GUI renders —
+/// `surveyor serve --json | jq -c 'select(.ev=="flow" and .fresh)'` — instead of re-polling
+/// `snapshot`. Read-only: a watching agent has no upstream channel, so there is no duplex.
+fn streamLoopJson(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, want_bpf: bool) !void {
+    var src = try openSource(gpa, io, want_bpf);
+    defer src.deinit();
+    var table = cartograph.FlowTable.init(gpa);
+    defer table.deinit();
+    const J = cartograph.json;
+
+    try J.writeHelloEvent(w, ipc.protocol_version);
+    try w.writeByte('\n');
+    // Inherit-on-connect: tell the agent the starting cursor (focus, R1), the same way the
+    // binary path sends the session. Read-only today — focus moves once the duplex command
+    // channel lands (RESEARCH R3); shipping the event shape now keeps that work additive.
+    try J.writeFocusEvent(w, cartograph.Focus{});
+    try w.writeByte('\n');
+    try w.flush();
+
+    var closed: std.ArrayList(cartograph.FlowKey) = .empty;
+    defer closed.deinit(gpa);
+
+    var next_tick = capture.nowMs(io);
+    while (true) {
+        const now = capture.nowMs(io);
+        if (now >= next_tick) {
+            closed.clearRetainingCapacity();
+            try src.tick(&table, now, &closed);
+
+            const flows = try table.snapshot(gpa);
+            defer gpa.free(flows);
+            for (flows) |f| {
+                try J.writeFlowEvent(w, f);
+                try w.writeByte('\n');
+            }
+            for (closed.items) |k| {
+                try J.writeClosedEvent(w, k);
+                try w.writeByte('\n');
+            }
+            try J.writeTickEvent(w, now, flows.len);
+            try w.writeByte('\n');
+            try w.flush();
+            next_tick = now + 1000;
+        }
+        const remaining: i64 = @max(0, @min(1000, next_tick - capture.nowMs(io)));
+        try io.sleep(std.Io.Duration.fromMilliseconds(@intCast(remaining)), .awake);
+    }
+}
+
+/// `surveyor serve --json` — the live NDJSON event stream to stdout.
+fn serveJson(gpa: std.mem.Allocator, io: std.Io, want_bpf: bool) !void {
+    var buf: [256 * 1024]u8 = undefined;
+    var fw = std.Io.File.stdout().writer(io, &buf);
+    try streamLoopJson(gpa, io, &fw.interface, want_bpf);
+}
+
+/// `surveyor serve --json --socket <path>` — the same NDJSON stream over a Unix socket, so a
+/// remote/headless agent watches the live box exactly as `serve --json | jq` does locally.
+fn serveSocketJson(gpa: std.mem.Allocator, io: std.Io, path: []const u8, want_bpf: bool) !void {
+    const lfd = try cartograph.usock.listen(path);
+    defer cartograph.usock.close(lfd);
+    while (true) {
+        const cfd = cartograph.usock.accept(lfd) catch continue;
+        defer cartograph.usock.close(cfd);
+        var buf: [256 * 1024]u8 = undefined;
+        var cf: std.Io.File = .{ .handle = cfd, .flags = .{ .nonblocking = false } };
+        var fw = cf.writer(io, &buf);
+        streamLoopJson(gpa, io, &fw.interface, want_bpf) catch {};
+    }
+}
+
+/// `surveyor --schema` — the self-describing contract (D18, "no AI left out"). A model that
+/// has never seen Cartograph runs this once and learns every field, event, and vocabulary.
+fn printSchema(io: std.Io) !void {
+    var buf: [16 * 1024]u8 = undefined;
+    var fw = std.Io.File.stdout().writer(io, &buf);
+    const w = &fw.interface;
+    try cartograph.json.writeSchema(w);
+    try w.writeByte('\n');
+    try w.flush();
 }

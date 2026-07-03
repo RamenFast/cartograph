@@ -24,6 +24,7 @@
 const std = @import("std");
 const lens = @import("lens.zig");
 const ontology = @import("ontology.zig");
+const focusmod = @import("focus.zig");
 
 /// The user-authored, view-local state a single renderer (or surveyor connection) holds.
 /// Initialised from a profile; individual lenses may then deviate from that bundle.
@@ -31,6 +32,10 @@ pub const SessionState = struct {
     profile: lens.Profile = .calm,
     /// The active lens set. Starts as `profile.lenses()`; a `lens_toggle` deviates it.
     lenses: lens.Set = lens.Profile.calm.lenses(),
+    /// The cursor this view is holding (focus.zig, R1). A *solo* (`view`-scoped) focus lives
+    /// here, per renderer; a *shared* focus is session truth surveyor will broadcast (the
+    /// next-session half — see `apply`). Defaults to the calm orbit establishing shot.
+    focus: focusmod.Focus = .{},
 
     pub fn init(profile: lens.Profile) SessionState {
         return .{ .profile = profile, .lenses = profile.lenses() };
@@ -55,13 +60,27 @@ pub const SessionState = struct {
         if (on) self.lenses.insert(l) else self.lenses.remove(l);
     }
 
+    /// Set the cursor (focus.zig, R1). The toggle carries the *absolute* desired focus, so
+    /// applying the same frame twice is idempotent (optimistic-local-apply + surveyor-echo
+    /// can't double-move).
+    pub fn setFocus(self: *SessionState, f: focusmod.Focus) void {
+        self.focus = f;
+    }
+
     /// Fold a `user_state` change in. Returns true if it altered this *view-local*
-    /// session (so the caller redraws); false for `.greeting`, which is shared truth
-    /// owned by surveyor's store (D22), not part of a per-view session.
+    /// session (so the caller redraws); false for changes that are **shared truth**, not a
+    /// per-view session change:
+    ///   * `.greeting` — surveyor-owned, persisted (D22).
+    ///   * `.focus` when `shared` — the session cursor every observer follows; surveyor owns
+    ///     and broadcasts it (R1, next-session). A *solo* focus is view-local and lands here.
     pub fn apply(self: *SessionState, us: ontology.UserState) bool {
         switch (us) {
             .profile => |p| self.setProfile(p),
             .lens_toggle => |lt| self.toggleLens(lt.lens, lt.on),
+            .focus => |f| {
+                if (f.shared) return false; // shared cursor — surveyor's to broadcast, not view-local
+                self.setFocus(f);
+            },
             .greeting => return false, // shared truth — not a view-local session change
         }
         return true;
@@ -86,7 +105,7 @@ pub const SessionState = struct {
     }
 
     pub fn eql(self: SessionState, other: SessionState) bool {
-        return self.profile == other.profile and self.lenses.eql(other.lenses);
+        return self.profile == other.profile and self.lenses.eql(other.lenses) and self.focus.eql(other.focus);
     }
 };
 
