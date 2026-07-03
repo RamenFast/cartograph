@@ -67,16 +67,20 @@ Cross-resource and visual-language work is threaded through, not bolted on at th
   `libcartograph`** (`service`/`exposure`, sshd/cups/resolved/nginx legible) — not a renderer
   detail (critique §5.3).
 
-## M3 — Hybrid capture + enrichment + the risk/impact engine
-- **Hybrid capture fusion (first):** make the `.bpf` source = inet_diag (baseline table + byte
-  counters) **+** eBPF events (births/deaths/short-lived/attribution), fused — so eBPF *adds* to
-  the live table instead of replacing it. This is what makes `--bpf` actually show the `?` rows
-  closed in the normal view (M2 left it either/or).
-- Passive DNS + TLS SNI/QUIC; offline GeoIP/ASN MMDB; **nDPI** classification; service
-  fingerprinting; the transparent **impact/confidence scoring** (DESIGN-LANGUAGE.md).
-- **`Greeting` lands here** (the persistence seam made type), after passing the type test;
-  scoring emits **`Reading`s**. **Every M1 in-process test gains an IPC twin** so the parity
-  claim survives the renderer swap (critique §5.2/§6).
+## M3 — Hybrid capture + enrichment + the risk/impact engine  *(mostly delivered under V1, 2026-07-03)*
+> **V1 (docs/V1.md) shipped the bulk of M3** as S1/S3 — folded into the "one lovable loop" scope.
+> The remaining M3 items (nDPI, the full scoring engine, `Greeting` persistence) are post-V1.
+- ✅ **Hybrid capture fusion (V1/S3):** the `.bpf` source is now inet_diag (baseline table + byte
+  counters) **fused with** eBPF events — births/deaths/short-lived/attribution *add to* the live
+  table instead of replacing it. `--bpf` shows the `?` rows closed in the normal view. Plus UDP/QUIC
+  byte counters (`udp_*` fexit → LRU map) and passive DNS. (`src/capture/bpf.zig`, `pdns.zig`.)
+- ✅ **Offline GeoIP/ASN MMDB + passive DNS (V1/S1+S3):** `src/lib/mmdb.zig` + `enrich.zig` +
+  `pdns.zig` — names, owners, countries, and the box's own resolved hostnames.
+- ⏳ **Still M3/post-V1:** TLS SNI (ECH erodes it), **nDPI** classification, service fingerprinting,
+  and the transparent **impact/confidence scoring** (DESIGN-LANGUAGE.md) — V1 ships the exposure
+  *badge*; the decomposed rings need the score engine.
+- ⏳ **`Greeting`** (the persistence seam made type) still lands post-V1, after the type test;
+  scoring emits **`Reading`s**. Every in-process test already has (or gains) its IPC twin.
 - **GTK (D21):** ✅ **the first GTK4 window shipped** (`src/gtk/main.zig`, `-Dgtk`,
   `./scripts/try-gtk.sh`) — a live attributed-flow table over the IPC socket, same view-model
   + same design-language palette as the TUI (parity by construction; `Category.hex()` is the
@@ -88,8 +92,9 @@ Cross-resource and visual-language work is threaded through, not bolted on at th
     cycles the profile and `1–6` toggle lenses (TUI too); the active profile/lens row + the
     column set react live. Direction-of-truth split: profile/lens view-local, greeting/rule
     shared (D22). This pays the critique §4 "Seam C" deadline down early, as planned.
-  - Next GTK steps: the docked **"Why" panel** for the selected flow, then category/risk
-    visuals (badges → confidence/impact rings) as scoring lands. See M4/FRONTENDS.md.
+  - ✅ **The docked "Why" panel (V1/S2)** narrates the selected flow (`src/lib/why.zig`, shared
+    with the TUI); row-select moves the shared cursor (D24). ✅ **App icons + category/risk
+    badges (V1/S4).** Confidence/impact *rings* still await the scoring engine (post-V1).
 
 ## M4 — The two expressions + the design language  *(GTK now starts in M3, D21 — this milestone is where it matures)*
 - **Terminal** (libvaxis, kitty-graphics logos) **and GTK** (GTK4 + zig-gobject), both over

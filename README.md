@@ -6,9 +6,11 @@
 > app's icon, the remote service's logo) and a continuous zoom from "who is my machine
 > talking to right now" all the way down to raw packet bytes.
 
-*Working title — see [docs/DECISIONS.md](docs/DECISIONS.md). Status: **M2 built** — unprivileged
-capture core + live TUI **and a live GTK window**, eBPF source (attach verified), and the
-Unix-socket privilege boundary. New here? Read [docs/NEXT-SESSION.md](docs/NEXT-SESSION.md).*
+*Working title — see [docs/DECISIONS.md](docs/DECISIONS.md). Status: **V1 shipped (2026-07-03)** —
+the one loop, done: **real names** (rDNS + offline GeoIP/ASN), a **real GTK app** (row list +
+docked "Why" panel + app icons + risk badges), and **realtime** (eBPF hybrid fusion, UDP/QUIC
+byte counters, passive-DNS true hostnames). 78/78 tests green (`-Dbpf=true`). New here? Read
+[docs/V1.md](docs/V1.md) for the scope call, then [docs/NEXT-SESSION.md](docs/NEXT-SESSION.md).*
 
 ---
 
@@ -26,18 +28,20 @@ excluded: GlassWire is Windows/Android-only and Little Snitch is macOS-only.**)*
 | capability | Wireshark | OpenSnitch | ntopng | Portmaster | **Cartograph** |
 |---|---|---|---|---|---|
 | Deep packet dissection | ✅ | ❌ | ◐ nDPI class. | ❌ | ◐ on-demand ·🎯 |
-| Per-process attribution | ❌ | ✅ | ❌ host/flow | ✅ | ✅ **proven** |
-| Human identity + **logos** | ❌ | ⚠️ app icon | ⚠️ ASN/host | ⚠️ | ✅ 🎯 |
+| Per-process attribution | ❌ | ✅ | ❌ host/flow | ✅ | ✅ **shipped** |
+| Human identity (name/owner/country) | ❌ | ⚠️ app icon | ⚠️ ASN/host | ⚠️ | ✅ **V1** |
+| Local app **icons** | ❌ | ⚠️ | ❌ | ⚠️ | ✅ **V1** |
 | Continuous **orbit→byte** zoom | ❌ | ❌ | ❌ | ❌ | ✅ 🎯 *(the unique one)* |
-| "Why was this sent?" narrative | ❌ | ❌ | ❌ | ❌ | ✅ 🎯 |
-| Risk **icon/color** language | ❌ | ⚠️ | ⚠️ | ⚠️ | ✅ 🎯 |
+| "Why was this sent?" narrative | ❌ | ❌ | ❌ | ❌ | ✅ **V1** |
+| Risk **color** language | ❌ | ⚠️ | ⚠️ | ⚠️ | ✅ **V1** (badges; rings 🎯) |
+| Short-lived + UDP/QUIC capture | ✅ | ◐ | ◐ | ◐ | ✅ **V1** (eBPF) |
 | Native blocking / firewall | ❌ | ✅ | ❌ | ✅ | ◐ XDP 🎯 |
-| Always-on + low overhead | ❌ | ✅ | ✅ | ✅ | ✅ 🎯 |
+| Always-on + low overhead | ❌ | ✅ | ✅ | ✅ | ✅ **shipped** |
 | Native (no Electron) | ✅ Qt | ✅ PyQt | ⚠️ web | ❌ Electron | ✅ Zig |
-| TUI **and** GTK, full parity | ❌ | ❌ | ❌ | ❌ | ✅ 🎯 |
+| TUI **and** GTK, full parity | ❌ | ❌ | ❌ | ❌ | ✅ **shipped** |
 
-Legend: ✅ yes · ◐ partial/on-demand · ⚠️ limited · ❌ no · **🎯 = Cartograph design target,
-not yet built** (only per-process attribution is *proven* today — see below). Honest notes:
+Legend: ✅ yes · ◐ partial/on-demand · ⚠️ limited · ❌ no · **V1 = shipped 2026-07-03** ·
+**🎯 = design target, post-V1** (the constellation map and XDP enforcement remain north). Honest notes:
 **Sniffnet** (Rust GUI) is lovely but **cannot attribute processes**; **Portmaster** is the
 closest existing Linux tool but ships a heavyweight Electron/Angular UI; **ntopng** is
 web-based and host/flow-oriented, not per-process.
@@ -97,42 +101,49 @@ sockets). A second spike (`experiments/sysmon.zig`) reads your **Radeon live** �
 VRAM, **watts**, °C — unprivileged, proving the cross-resource "see your whole computer"
 stream. See **[docs/EXPERIMENTS.md](docs/EXPERIMENTS.md)**.
 
-## Quickstart  (M1 — builds & runs today)
+## Quickstart  (V1 — builds & runs today)
 
 ```bash
 # Zig 0.16 is vendored in toolchain/ (no system install needed)
 ./toolchain/zig build                 # build surveyor + cartograph into zig-out/bin
-./toolchain/zig build test            # run the unit tests (42 green; 46 with -Dbpf=true)
+./toolchain/zig build test            # unit tests (73 green; 78 with -Dbpf=true)
 ./toolchain/zig build run             # the live TUI (in-process capture)
+
+# real names (V1/S1): populate the offline GeoIP/ASN databases once — DB-IP Lite, no account:
+./scripts/fetch-geoip.sh              # → ~/.local/share/cartograph/geoip (never committed)
+# surveyor picks them up automatically; rDNS + GeoIP turn IPs into names, owners, countries.
 
 # the architecture for real — capture core streams binary IPC to the frontend:
 ./zig-out/bin/surveyor serve | ./zig-out/bin/cartograph --ipc
 
-# …or over the real privilege boundary (a Unix socket, M2):
+# …or over the real privilege boundary (a Unix socket):
 ./zig-out/bin/surveyor serve --socket /tmp/cg.sock &
-./zig-out/bin/cartograph --ipc --socket /tmp/cg.sock
+./zig-out/bin/cartograph --ipc --socket /tmp/cg.sock   # j/k select · a flow → the "Why" panel
 
 # the agent / Unix surface — legible to any model from Opus to Gemma-12b (docs/AGENT-INTERFACE.md):
 ./zig-out/bin/surveyor --schema | jq            # self-describe: every field, event, vocabulary
 ./zig-out/bin/surveyor snapshot       # one-shot table — pretty at a TTY, NDJSON in a pipe
 ./zig-out/bin/surveyor snapshot | jq          # auto-NDJSON on a pipe (no flag needed)
-./zig-out/bin/surveyor serve --json | jq -c 'select(.ev=="flow")'  # WATCH the live stream
+./zig-out/bin/surveyor serve --json | jq -c 'select(.ev=="flow" and .as_org!="")'  # WATCH, by owner
 
-# eBPF capture (M2, opt-in). One script builds it, grants caps, and tests it:
+# realtime (V1/S3, opt-in eBPF). One script builds it, grants caps, and tests it:
 ./scripts/try-ebpf.sh                 # asks for your password once (setcap only)
+./zig-out/bin/surveyor serve --bpf --socket /tmp/cg.sock   # hybrid: short-lived + UDP bytes + passive DNS
 ./scripts/try-ebpf.sh --undo          # remove the caps, back to unprivileged
 
-# the GTK window (opt-in build). One script builds it and opens it over the socket:
-./scripts/try-gtk.sh                  # unprivileged; close the window to stop
+# the GTK app (opt-in build). One script builds it and opens it over the socket:
+./scripts/try-gtk.sh                  # unprivileged; click a flow for the "Why" panel; close to stop
 ./toolchain/zig build run-gtk -Dgtk -- --socket /tmp/cg.sock   # or run it directly
 ```
 Without caps, `surveyor … --bpf` falls back to the inet_diag path *loudly* (it tells
-you exactly what's missing) — it never silently downgrades and never crashes.
+you exactly what's missing) — it never silently downgrades and never crashes. Missing
+GeoIP databases degrade the same way (names stay rDNS-only), never silently.
 
-The TUI shows, per flow: the owning app + category glyph, the (IPv6-bracketed) endpoint,
-a live throughput **sparkline**, total bytes, and **RTT** — all from real cumulative
-counters (`inet_diag`), attributed to PIDs via `/proc`, **unprivileged**. `q` quits,
-`p` cycles lens profiles (calm → nerd → security → resource).
+The frontends show, per flow: the owning app + its **real icon** + category glyph, the remote
+by **name (owner · country)**, a live throughput **sparkline**, total bytes, and **RTT** —
+from real counters (`inet_diag` for TCP, eBPF for UDP/QUIC), attributed to PIDs. Select any flow
+for the **"Why" panel** (process · parent · owner · service · latency · age). `q` quits, `p`
+cycles lens profiles (calm → nerd → security → resource), `j/k` select, `esc` returns to orbit.
 
 **Architecture realised in M1:** one `libcartograph` view-model (`src/lib`), a capture
 core (`src/capture` + `src/surveyor`) that speaks a lean length-prefixed binary IPC, and a
@@ -148,14 +159,17 @@ cartograph/
 ├── src/
 │   ├── lib/             ← libcartograph: the frontend-agnostic view-model
 │   │   ├── flow.zig · table.zig · ipc.zig · identity.zig · lens.zig · sparkline.zig
+│   │   ├── focus.zig · session.zig · scope.zig       ← the shared cursor + user-state
+│   │   ├── mmdb.zig · why.zig · appicon.zig · fmt.zig  ← V1: GeoIP reader, narration, icons
 │   ├── capture/         ← capture core: inet_diag byte counters + /proc attribution
 │   │   ├── diag.zig · proc.zig · capture.zig
+│   │   ├── enrich.zig · pdns.zig     ← V1: rDNS/GeoIP enrichment, passive DNS
 │   ├── capture/bpf/    ← the CO-RE eBPF program (cartograph.bpf.c) + event.h
 │   ├── surveyor/main.zig   ← capture CLI: `snapshot` | `serve` (binary IPC / socket)
-│   ├── tui/             ← the first frontend: live attributed-flow TUI
+│   ├── tui/             ← the first frontend: live attributed-flow TUI + Why panel
 │   │   ├── main.zig · term.zig
-│   └── gtk/main.zig    ← the GTK4 frontend: live flow window over the IPC socket
-├── scripts/            ← try-ebpf.sh (eBPF + caps) · try-gtk.sh (build + open the window)
+│   └── gtk/main.zig    ← the GTK4 app: flow list + Why panel + icons over the IPC socket
+├── scripts/            ← try-ebpf.sh (eBPF+caps) · try-gtk.sh (window) · fetch-geoip.sh (GeoIP)
 ├── man/cartograph.1     ← man page draft (Bloom UX) — renders clean
 ├── atlas/               ← the shared-presence layer: Elixir/LiveView multi-observer fan-out (essential; scaffold)
 ├── toolchain/           ← vendored Zig 0.16.0 (gitignored)

@@ -1,38 +1,46 @@
 # Cartograph — next session (start here)
 
-> Updated 2026-06-19 (the teardown + agent-surface + R1 session). New here? Read [docs/README.md](README.md)
-> (the index + status map) first, then this. Everything below builds + tests green:
-> **`zig build test` = 50, `-Dbpf=true` = 54.**
+> Updated 2026-07-03 (**V1 shipped**). New here? Read [docs/V1.md](V1.md) (the scope call + the
+> S1→S4 build log), then [docs/README.md](README.md) (index + status map). Everything builds +
+> tests green: **`zig build test` = 73, `-Dbpf=true` = 78.**
 
-## ⭐ NEXT SESSION STARTS HERE — finish R1 (the shared cursor)
+## ⭐ V1 IS DONE (2026-07-03) — the one loop, shipped
 
-The `Focus` **seam is built** this session (D24, `src/lib/focus.zig`): the cursor is first-class
-view-model state on the `user_state` parity frame, with an equal-fidelity JSON projection for
-agents (`focus` event on `serve --json`, in `--schema`). What remains is three concrete builds,
-in this order — each is a clean, scoped starting point:
+*See, live and by real name, every process on this machine and who it's talking to — and click
+any flow to know why.* Built S1→S4 (docs/V1.md), each step verified live on this box:
 
-1. **Renderer wiring — both frontends in one step (don't split, or you re-break render-parity R5).**
-   TUI + GTK: display the active cursor (the `Focus.describe()` line in the header, next to the
-   profile/lens row) and let the user *move* it — keys for altitude (zoom in/out) and selecting a
-   row → `SessionState.setFocus` → send `user_state{focus}` upstream (the path profile/lens already
-   use). This is the "GTK every step" task (D21) and it makes the cursor visible.
-2. **Duplex JSON command channel (R3) — let the agent *move* the cursor, not just read it.** Today
-   `serve --json` is read-only (one-way pipe). Add an upstream NDJSON command on the socket
-   (`serve --json --socket`): the agent writes a line like `{"cmd":"focus","altitude":"region",
-   "target":"entity","entity_kind":"asn","entity":"13335"}`, surveyor parses it to a `UserState`
-   and applies it. This is the first agent *write* verb — wire it generically so `set-profile` /
-   `lens` come free, and so the act ontology's `Ruling` has its first consumer. **No auth/consent
-   handshake** (D25 — full-trust home environment): the agent writes, it applies, everyone sees it,
-   it's undoable. The safety budget goes into visibility + reversibility (D14), not gates.
-3. **Multi-client broadcast (R1 / atlas) — make a `shared` cursor actually shared.** Surveyor today
-   serves one client at a time (`serveSocket` accepts then blocks in `streamLoop`). For a `shared`
-   focus to reach every observer, surveyor needs a client registry + fan-out. This is where the
-   **`atlas` BEAM layer** earns its keep (D9 amended — essential, not optional): the natural home
-   for many-observer presence. Start small (a Zig multi-client accept loop broadcasting
-   session-scoped `user_state`), then let `atlas` own the fan-out + presence.
+- **S1 — real identity.** `src/lib/mmdb.zig` (pure-Zig MaxMind reader) + `src/capture/enrich.zig`
+  (threaded rDNS resolver + offline GeoIP/ASN) turn `160.79.104.10` into *Anthropic, PBC · US*.
+  `flow_upsert` grew `remote_name/asn/as_org/country` (proto v3, trailing-additive); on the wire,
+  in `--schema`, and in the TUI/GTK/snapshot renderers. `scripts/fetch-geoip.sh` (DB-IP Lite).
+- **S2 — the GTK app.** The label wall → a `GtkListBox` (per-row updates) + a docked **"Why" panel**
+  (`src/lib/why.zig`, a pure narration shared with the TUI). Row-select moves the **shared cursor**
+  (D24): street focus → `user_state{focus}` upstream. Parent lineage (ppid/pcomm) added (proto v4).
+- **S3 — realtime.** eBPF now **fuses** into the inet_diag table (not either/or): short-lived flows,
+  UDP/QUIC byte counters (`udp_*` fexit → LRU map), and **passive DNS** (`src/capture/pdns.zig` —
+  the box's own :53 answers → true hostnames that outrank rDNS). Fixed a real M2 kernel bug (v6
+  addresses were 1-byte-truncated). `table.observe` is fusion-safe (no counter regression).
+- **S4 — the visual layer.** `src/lib/appicon.zig` resolves exe/comm → XDG icon name (offline);
+  GTK rows wear the app's real icon; the Why panel shows a category chip + a colour-graded
+  **exposure risk badge** for listeners (`Exposure.hex()`).
 
-`scopeOf(.focus)` already returns `session` when `shared` — so the design is settled; these are
-builds, not decisions. See [RESEARCH.md](RESEARCH.md) R1/R3 and DECISIONS **D24**.
+## What to build next (post-V1, the vision resumes)
+
+V1 was built so each of these lands as an addition, not a rewrite. In rough priority:
+
+1. **The duplex command channel (R3).** `serve --json` is still read-only. Let the agent *move*
+   the shared cursor it can already see: an upstream NDJSON command on `serve --json --socket`
+   (`{"cmd":"focus",...}` → `UserState` → apply). No auth handshake (D25). First agent *write* verb;
+   wire it generically so `set-profile`/`lens` come free.
+2. **Multi-client broadcast (R1 / atlas).** Surveyor serves one client at a time. For a `shared`
+   cursor to reach every observer, add a client registry + fan-out — the natural home for `atlas`
+   (D9/D26: essential to the *maximal* vision, out of V1). Start with a Zig multi-client accept loop.
+3. **The constellation map.** The force-directed orbit→region→street zoom — the hardest 20% V1
+   deliberately deferred, and the thing that makes it *a map*. The `Focus`/`Altitude` seam is built.
+4. **Scoring → risk rings.** `Reading`s (impact/confidence) feeding the confidence/impact rings
+   (DESIGN-LANGUAGE §2/§4). V1 ships the exposure *badge*; the decomposed rings need the score engine.
+
+See [RESEARCH.md](RESEARCH.md) R1/R3, [V1.md](V1.md) (deferred column), and DECISIONS **D24/D25/D26**.
 
 ## What this session (2026-06-19) did
 - **A full critique-and-improve pass** (Ben's `/goal`). Audited code + docs with two agents,
