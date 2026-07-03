@@ -73,43 +73,77 @@ pub fn main(init: std.process.Init) !void {
 }
 
 /// The capture source behind the Observation seam: unprivileged inet_diag, or the
-/// eBPF program (when built with -Dbpf and the process holds the caps). Neither the
-/// FlowTable nor any frontend sees which — that is the point of the seam.
+/// S3 **hybrid** — inet_diag baseline *fused with* the eBPF programs (when built
+/// with -Dbpf and the process holds the caps). Neither the FlowTable nor any
+/// frontend sees which — that is the point of the seam.
 const Source = union(enum) {
     diag: capture.Capturer,
-    bpf: bpf.BpfCapturer,
+    hybrid: Hybrid,
+
+    const Hybrid = struct {
+        diag: capture.Capturer,
+        bpf: bpf.BpfCapturer,
+    };
 
     fn deinit(self: *Source) void {
         switch (self.*) {
-            inline else => |*s| s.deinit(),
+            .diag => |*c| c.deinit(),
+            .hybrid => |*h| {
+                h.diag.deinit();
+                h.bpf.deinit();
+            },
         }
     }
 
-    /// One capture tick: fold the current observations into `table`, and collect the
-    /// keys of flows that died. diag rescans + sweeps; bpf drains kernel events.
+    /// One capture tick. Hybrid fusion (S3): the diag rescan is the baseline (the
+    /// existing table, TCP bytes, RTT), the eBPF drain adds what polling misses
+    /// (births/deaths between ticks, short-lived flows, UDP/QUIC counters), and the
+    /// generation sweep stays the single eviction authority.
     fn tick(self: *Source, table: *cartograph.FlowTable, now: i64, closed: *std.ArrayList(cartograph.FlowKey)) !void {
+        table.beginCycle();
         switch (self.*) {
-            .diag => |*c| {
-                table.beginCycle();
-                try c.refresh(table, now);
-                try table.collectClosed(closed);
+            .diag => |*c| try c.refresh(table, now),
+            .hybrid => |*h| {
+                try h.diag.refresh(table, now);
+                try h.bpf.drain(table, now);
             },
-            .bpf => |*c| try c.refresh(table, now, closed),
         }
+        try table.collectClosed(closed);
+    }
+
+    /// The passive-DNS filter program, when the eBPF half is live (pdns needs it).
+    fn dnsFilterFd(self: *Source) ?i32 {
+        return switch (self.*) {
+            .hybrid => |*h| h.bpf.dns_filter_fd,
+            else => null,
+        };
     }
 };
 
-/// Choose the source: eBPF if asked for *and* it actually loads (caps present), else
-/// the inet_diag fallback. The fallback is loud about *why* — never a silent downgrade.
+/// Choose the source: the eBPF hybrid if asked for *and* it actually loads (caps
+/// present), else the inet_diag fallback. Loud about *why* — never a silent downgrade.
 fn openSource(gpa: std.mem.Allocator, io: std.Io, want_bpf: bool) !Source {
     if (want_bpf) {
         if (bpf.BpfCapturer.init(gpa)) |b| {
-            return .{ .bpf = b };
+            return .{ .hybrid = .{ .diag = try capture.Capturer.init(gpa, io), .bpf = b } };
         } else |err| {
             warnBpfFallback(io, err);
         }
     }
     return .{ .diag = try capture.Capturer.init(gpa, io) };
+}
+
+/// Open the passive-DNS tap when the hybrid source is live. Its own caps failure
+/// (CAP_NET_RAW) degrades loudly to rDNS-only names — never silently.
+fn openPdns(io: std.Io, src: *Source) ?capture.pdns.Pdns {
+    const pfd = src.dnsFilterFd() orelse return null;
+    return capture.pdns.Pdns.init(pfd) catch |err| {
+        var buf: [256]u8 = undefined;
+        var fw = std.Io.File.stderr().writer(io, &buf);
+        fw.interface.print("{s}note:{s} passive DNS unavailable ({s}; needs cap_net_raw) — names stay rDNS-only.\n", .{ DIM, RST, @errorName(err) }) catch {};
+        fw.interface.flush() catch {};
+        return null;
+    };
 }
 
 fn warnBpfFallback(io: std.Io, err: anyerror) void {
@@ -169,10 +203,13 @@ fn snapshot(gpa: std.mem.Allocator, io: std.Io, as_json: bool, want_bpf: bool, g
     defer table.deinit();
     var enricher = capture.enrich.Enricher.init(gpa, io, geoip_dir);
     defer enricher.deinit();
+    var pdns = openPdns(io, &src);
+    defer if (pdns) |*p| p.deinit();
 
     var closed: std.ArrayList(cartograph.FlowKey) = .empty;
     defer closed.deinit(gpa);
     try src.tick(&table, capture.nowMs(io), &closed);
+    if (pdns) |*p| p.poll(&enricher, capture.nowMs(io));
 
     const flows = try table.snapshot(gpa);
     defer gpa.free(flows);
@@ -364,6 +401,8 @@ fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, in_fd: ?std
     defer table.deinit();
     var enricher = capture.enrich.Enricher.init(gpa, io, geoip_dir);
     defer enricher.deinit();
+    var pdns = openPdns(io, &src);
+    defer if (pdns) |*p| p.deinit();
 
     var link: ?ClientLink = if (in_fd) |fd| ClientLink.init(gpa, fd) else null;
     defer if (link) |*l| l.deinit();
@@ -381,6 +420,7 @@ fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, in_fd: ?std
         if (now >= next_tick) {
             closed.clearRetainingCapacity();
             try src.tick(&table, now, &closed);
+            if (pdns) |*p| p.poll(&enricher, now); // true hostnames before this tick decorates
 
             const flows = try table.snapshot(gpa);
             defer gpa.free(flows);
@@ -457,6 +497,8 @@ fn streamLoopJson(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, want_bp
     defer table.deinit();
     var enricher = capture.enrich.Enricher.init(gpa, io, geoip_dir);
     defer enricher.deinit();
+    var pdns = openPdns(io, &src);
+    defer if (pdns) |*p| p.deinit();
     const J = cartograph.json;
 
     try J.writeHelloEvent(w, ipc.protocol_version);
@@ -477,6 +519,7 @@ fn streamLoopJson(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, want_bp
         if (now >= next_tick) {
             closed.clearRetainingCapacity();
             try src.tick(&table, now, &closed);
+            if (pdns) |*p| p.poll(&enricher, now);
 
             const flows = try table.snapshot(gpa);
             defer gpa.free(flows);

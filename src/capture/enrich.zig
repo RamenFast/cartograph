@@ -36,10 +36,13 @@ pub const pending_ttl_ms: i64 = 30 * 1000; // a lost in-flight lookup retries af
 
 pub const ResolveCache = struct {
     pub const State = enum { pending, named, negative };
-    const Entry = struct {
+    pub const Entry = struct {
         state: State,
         name: flow.Str(128) = .{},
         expires_ms: i64,
+        /// True for a passive-DNS name (S3): what this box actually asked for —
+        /// it outranks an rDNS guess for the same address and upgrades it in place.
+        authoritative: bool = false,
     };
 
     map: std.AutoHashMapUnmanaged(Addr, Entry) = .empty,
@@ -48,11 +51,16 @@ pub const ResolveCache = struct {
         self.map.deinit(gpa);
     }
 
-    /// The live name for `addr`, if we hold one.
-    pub fn get(self: *const ResolveCache, addr: Addr, now_ms: i64) ?[]const u8 {
+    /// The live named entry for `addr`, if we hold one.
+    pub fn getNamed(self: *const ResolveCache, addr: Addr, now_ms: i64) ?*const Entry {
         const e = (self.map.getPtr(addr)) orelse return null;
         if (e.state != .named or now_ms >= e.expires_ms) return null;
-        return e.name.slice();
+        return e;
+    }
+
+    /// The live name for `addr`, if we hold one.
+    pub fn get(self: *const ResolveCache, addr: Addr, now_ms: i64) ?[]const u8 {
+        return if (self.getNamed(addr, now_ms)) |e| e.name.slice() else null;
     }
 
     /// Should a lookup launch for `addr`? True exactly once per expiry window — the
@@ -64,15 +72,25 @@ pub const ResolveCache = struct {
         return true;
     }
 
-    /// A lookup finished: record the name — or the miss, with its shorter TTL.
+    /// An rDNS lookup finished: record the name — or the miss, with its shorter TTL.
+    /// Never displaces a live authoritative (passive-DNS) name.
     pub fn put(self: *ResolveCache, gpa: std.mem.Allocator, addr: Addr, name: ?[]const u8, now_ms: i64) !void {
         const gop = try self.map.getOrPut(gpa, addr);
+        if (gop.found_existing and gop.value_ptr.authoritative and
+            gop.value_ptr.state == .named and now_ms < gop.value_ptr.expires_ms) return;
         if (name) |n| {
             gop.value_ptr.* = .{ .state = .named, .expires_ms = now_ms + name_ttl_ms };
             gop.value_ptr.name.set(n);
         } else {
             gop.value_ptr.* = .{ .state = .negative, .expires_ms = now_ms + negative_ttl_ms };
         }
+    }
+
+    /// A passive-DNS answer: authoritative, always wins, refreshes its TTL.
+    pub fn offer(self: *ResolveCache, gpa: std.mem.Allocator, addr: Addr, name: []const u8, now_ms: i64) !void {
+        const gop = try self.map.getOrPut(gpa, addr);
+        gop.value_ptr.* = .{ .state = .named, .expires_ms = now_ms + name_ttl_ms, .authoritative = true };
+        gop.value_ptr.name.set(name);
     }
 };
 
@@ -154,13 +172,16 @@ pub const Resolver = struct {
     }
 
     /// Fill `f.remote_name` from the cache, or start a background lookup for it.
+    /// An authoritative (passive-DNS) name upgrades an already-named flow in place;
+    /// an rDNS name only fills emptiness.
     pub fn decorate(self: *Resolver, f: *Flow, now_ms: i64) void {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        if (self.cache.get(f.key.remote, now_ms)) |name| {
-            f.remote_name.set(name);
+        if (self.cache.getNamed(f.key.remote, now_ms)) |e| {
+            if (e.authoritative or f.remote_name.len == 0) f.remote_name.set(e.name.slice());
             return;
         }
+        if (f.remote_name.len > 0) return; // already named (an expired cache entry keeps its flow name)
         if (self.no_concurrency) return;
         self.reapLocked();
         const free: usize = for (self.slots, 0..) |s, i| {
@@ -311,8 +332,16 @@ pub const Enricher = struct {
             const r = f.key.remote;
             if (r.isUnspecified() or r.isLoopback() or r.isMulticast() or f.isListen()) continue;
             if (f.asn == 0 and f.country[0] == 0) self.geo.annotate(f);
-            if (f.remote_name.len == 0) self.resolver.decorate(f, now_ms);
+            self.resolver.decorate(f, now_ms);
         }
+    }
+
+    /// The passive-DNS sink (pdns.zig calls this per A/AAAA answer): remember the
+    /// name this box asked for, authoritatively. Thread-safe like the resolver.
+    pub fn offerName(self: *Enricher, addr: cartograph.Addr, name: []const u8, now_ms: i64) void {
+        self.resolver.mutex.lockUncancelable(self.resolver.io);
+        defer self.resolver.mutex.unlock(self.resolver.io);
+        self.resolver.cache.offer(self.resolver.gpa, addr, name, now_ms) catch {};
     }
 };
 
@@ -350,6 +379,24 @@ test "resolve cache: claim once per window, named/negative TTLs expire" {
     const d = Addr.v4(.{ 10, 0, 0, 1 });
     try testing.expect(try c.claim(gpa, d, 9000));
     try testing.expect(try c.claim(gpa, d, 9000 + pending_ttl_ms));
+}
+
+test "a passive-DNS name outranks rDNS and upgrades in place; rDNS never displaces it" {
+    const gpa = testing.allocator;
+    var c: ResolveCache = .{};
+    defer c.deinit(gpa);
+    const a = Addr.v4(.{ 140, 82, 116, 3 });
+
+    // rDNS lands first (the S1 baseline)…
+    try c.put(gpa, a, "lb-140-82-116-3-sea.github.com", 1000);
+    try testing.expectEqualStrings("lb-140-82-116-3-sea.github.com", c.get(a, 1001).?);
+    // …then the box resolves the name itself: the asked-for name wins
+    try c.offer(gpa, a, "github.com", 2000);
+    try testing.expectEqualStrings("github.com", c.get(a, 2001).?);
+    try testing.expect(c.getNamed(a, 2001).?.authoritative);
+    // a later rDNS answer must NOT displace it
+    try c.put(gpa, a, "lb-140-82-116-3-sea.github.com", 3000);
+    try testing.expectEqualStrings("github.com", c.get(a, 3001).?);
 }
 
 test "resolver smoke: 127.0.0.1 resolves via /etc/hosts and lands in the flow" {

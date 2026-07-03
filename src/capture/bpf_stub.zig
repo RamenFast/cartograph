@@ -10,9 +10,11 @@ const cartograph = @import("cartograph");
 pub const built = false;
 
 pub const BpfCapturer = struct {
+    dns_filter_fd: i32 = -1,
+
     pub fn init(_: std.mem.Allocator) !BpfCapturer {
         return error.BpfNotBuilt;
     }
     pub fn deinit(_: *BpfCapturer) void {}
-    pub fn refresh(_: *BpfCapturer, _: *cartograph.FlowTable, _: i64, _: *std.ArrayList(cartograph.FlowKey)) !void {}
+    pub fn drain(_: *BpfCapturer, _: *cartograph.FlowTable, _: i64) !void {}
 };

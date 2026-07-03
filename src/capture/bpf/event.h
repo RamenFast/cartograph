@@ -24,4 +24,21 @@ struct cg_event {
     char comm[16];
 };
 
+/* One UDP socket's running byte counters (S3): the value of the `udp_flows`
+ * LRU hash, keyed by socket cookie (__u64). Mirrored exactly by `CgUdpFlow`
+ * in src/capture/bpf.zig; both sides assert sizeof == 80 (no implicit pad). */
+struct cg_udp_flow {
+    __u64 tx_bytes; /* 0  */
+    __u64 rx_bytes; /* 8  */
+    __u32 pid;      /* 16 */
+    __u32 uid;      /* 20 */
+    __u16 sport;    /* 24 — host byte order */
+    __u16 dport;    /* 26 — host byte order */
+    __u8 family;    /* 28 — 2 / 10 */
+    __u8 _pad[3];   /* 29 */
+    __u8 saddr[16]; /* 32 */
+    __u8 daddr[16]; /* 48 */
+    char comm[16];  /* 64 */
+};                  /* 80 */
+
 #endif

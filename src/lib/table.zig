@@ -87,18 +87,25 @@ pub const FlowTable = struct {
         const e = gop.value_ptr;
         const f = &e.flow;
         const dt_ms = now_ms - f.last_seen_ms;
-        if (dt_ms > 0) {
-            const d_rx = obs.rx_bytes -| f.rx_bytes;
-            const d_tx = obs.tx_bytes -| f.tx_bytes;
-            f.rx_rate = @intCast(@min(max_u32, d_rx * 1000 / @as(u64, @intCast(dt_ms))));
-            f.tx_rate = @intCast(@min(max_u32, d_tx * 1000 / @as(u64, @intCast(dt_ms))));
+        // Counters: only a source that HAS byte counters may move them (inet_diag for
+        // TCP, the eBPF udp map for UDP). A counter-less observation of the same key —
+        // hybrid capture folds several sources per tick (S3) — must not regress bytes
+        // to zero. Real counters are monotonic per socket, so nonzero ⇒ authoritative.
+        if (obs.rx_bytes != 0 or obs.tx_bytes != 0) {
+            if (dt_ms > 0) {
+                const d_rx = obs.rx_bytes -| f.rx_bytes;
+                const d_tx = obs.tx_bytes -| f.tx_bytes;
+                f.rx_rate = @intCast(@min(max_u32, d_rx * 1000 / @as(u64, @intCast(dt_ms))));
+                f.tx_rate = @intCast(@min(max_u32, d_tx * 1000 / @as(u64, @intCast(dt_ms))));
+            }
+            f.rx_bytes = @max(f.rx_bytes, obs.rx_bytes);
+            f.tx_bytes = @max(f.tx_bytes, obs.tx_bytes);
         }
-        f.rates.push(@intCast(@min(max_u32, f.throughput())));
+        // One sparkline sample per tick, not per source: dt 0 = a same-tick re-observe.
+        if (dt_ms > 0) f.rates.push(@intCast(@min(max_u32, f.throughput())));
         f.state = obs.state;
         f.category = identity.classify(obs.key, obs.state);
-        f.rx_bytes = obs.rx_bytes;
-        f.tx_bytes = obs.tx_bytes;
-        f.rtt_us = obs.rtt_us;
+        if (obs.rtt_us != 0) f.rtt_us = obs.rtt_us;
         f.last_seen_ms = now_ms;
         f.fresh = false;
         // Late attribution: a socket that was a `?` may now resolve to a PID.
@@ -218,6 +225,39 @@ test "late attribution fills a previously unknown pid" {
     defer t.allocator.free(snap);
     try t.expectEqual(@as(u32, 99), snap[0].pid);
     try t.expectEqualStrings("sshd", snap[0].comm.slice());
+}
+
+test "hybrid fusion: a counter-less same-tick observation neither regresses bytes nor double-samples" {
+    const t = std.testing;
+    var tbl = FlowTable.init(t.allocator);
+    defer tbl.deinit();
+    const key: FlowKey = .{
+        .proto = .tcp,
+        .local = flow.Addr.v4(.{ 192, 168, 1, 9 }),
+        .local_port = 44330,
+        .remote = flow.Addr.v4(.{ 140, 82, 121, 4 }),
+        .remote_port = 443,
+    };
+
+    // tick 1: diag sees bytes; then an eBPF event for the same key, same tick, no bytes
+    tbl.beginCycle();
+    try tbl.observe(.{ .key = key, .state = .established, .pid = 7, .rx_bytes = 1000, .tx_bytes = 500, .rtt_us = 20_000 }, 1000);
+    try tbl.observe(.{ .key = key, .state = .established, .pid = 7 }, 1000);
+    {
+        const snap = try tbl.snapshot(t.allocator);
+        defer t.allocator.free(snap);
+        try t.expectEqual(@as(u64, 1000), snap[0].rx_bytes); // not regressed to 0
+        try t.expectEqual(@as(u32, 20_000), snap[0].rtt_us); // rtt kept too
+    }
+
+    // tick 2: diag advances the counters — rates derive across the full tick
+    tbl.beginCycle();
+    try tbl.observe(.{ .key = key, .state = .established, .pid = 7, .rx_bytes = 11_000, .tx_bytes = 500 }, 2000);
+    {
+        const snap = try tbl.snapshot(t.allocator);
+        defer t.allocator.free(snap);
+        try t.expectEqual(@as(u32, 10_000), snap[0].rx_rate);
+    }
 }
 
 test "closed flows are swept" {
