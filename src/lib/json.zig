@@ -68,6 +68,14 @@ fn writeFlowFields(w: *Writer, f: *const Flow, lead_comma: bool) Writer.Error!vo
     try str(w, f.key.remote.fmt(&bb));
     try field(w, "remote_port", true);
     try w.print("{d}", .{f.key.remote_port});
+    try field(w, "remote_name", true);
+    try str(w, f.remote_name.slice());
+    try field(w, "asn", true);
+    try w.print("{d}", .{f.asn});
+    try field(w, "as_org", true);
+    try str(w, f.as_org.slice());
+    try field(w, "country", true);
+    try str(w, if (f.country[0] != 0) &f.country else "");
     try field(w, "rx_bytes", true);
     try w.print("{d}", .{f.rx_bytes});
     try field(w, "tx_bytes", true);
@@ -237,6 +245,10 @@ pub fn writeSchema(w: *Writer) Writer.Error!void {
         .{ "local_port", "number", "" },
         .{ "remote", "string", "bare address, no brackets" },
         .{ "remote_port", "number", "" },
+        .{ "remote_name", "string", "hostname (rDNS today, SNI/passive-DNS later); empty = unknown" },
+        .{ "asn", "number", "autonomous system number; 0 = unknown" },
+        .{ "as_org", "string", "AS organization (who owns the remote); empty = unknown" },
+        .{ "country", "string", "ISO 3166-1 alpha-2 of the remote; empty = unknown" },
         .{ "rx_bytes", "number", "cumulative bytes (inet_diag; TCP)" },
         .{ "tx_bytes", "number", "cumulative bytes" },
         .{ "rx_rate", "number", "bytes/sec, derived between ticks" },
@@ -318,6 +330,10 @@ test "flow emits valid, parseable json" {
     f.exe.set("/usr/lib/x");
     f.rx_bytes = 410_000;
     f.rtt_us = 24_200;
+    f.remote_name.set("api.anthropic.com");
+    f.asn = 13335;
+    f.as_org.set("CLOUDFLARENET");
+    f.country = .{ 'U', 'S' };
 
     var buf: [1024]u8 = undefined;
     var w = Writer.fixed(&buf);
@@ -337,6 +353,24 @@ test "flow emits valid, parseable json" {
     // the `?`-flow answer is on the agent surface too (derived, always present)
     try t.expectEqualStrings("https", obj.get("service").?.string);
     try t.expectEqualStrings("none", obj.get("exposure").?.string);
+    // the S1 identity fields ride the same line
+    try t.expectEqualStrings("api.anthropic.com", obj.get("remote_name").?.string);
+    try t.expectEqual(@as(i64, 13335), obj.get("asn").?.integer);
+    try t.expectEqualStrings("CLOUDFLARENET", obj.get("as_org").?.string);
+    try t.expectEqualStrings("US", obj.get("country").?.string);
+}
+
+test "unknown identity emits empty strings, not garbage" {
+    const t = std.testing;
+    var f: Flow = .{ .key = .{ .proto = .udp, .local = flow.Addr.v4(.{ 192, 168, 1, 9 }), .local_port = 5353, .remote = flow.Addr.v4(.{ 224, 0, 0, 251 }), .remote_port = 5353 } };
+    var buf: [1024]u8 = undefined;
+    var w = Writer.fixed(&buf);
+    try writeFlow(&w, &f);
+    const p = try std.json.parseFromSlice(std.json.Value, t.allocator, w.buffered(), .{});
+    defer p.deinit();
+    try t.expectEqualStrings("", p.value.object.get("remote_name").?.string);
+    try t.expectEqual(@as(i64, 0), p.value.object.get("asn").?.integer);
+    try t.expectEqualStrings("", p.value.object.get("country").?.string);
 }
 
 test "event-stream lines parse and carry the right discriminator" {
@@ -424,7 +458,7 @@ test "schema is valid JSON and its enums match the code (no drift)" {
     defer p.deinit();
     const root = p.value.object;
     // the schema describes every flow field the writer emits
-    try t.expectEqual(@as(usize, 21), root.get("flow_fields").?.array.items.len);
+    try t.expectEqual(@as(usize, 25), root.get("flow_fields").?.array.items.len);
     // and the category vocabulary is generated from the enum, so counts must agree
     const cats = root.get("enums").?.object.get("category").?.array;
     try t.expectEqual(std.enums.values(identity.Category).len, cats.items.len);

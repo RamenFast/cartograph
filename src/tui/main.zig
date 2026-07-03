@@ -29,6 +29,7 @@ pub fn main(init: std.process.Init) !void {
 
     var use_ipc = false;
     var sock_path: ?[]const u8 = null;
+    var geoip_dir: ?[]const u8 = null;
     var args = std.process.Args.Iterator.init(init.minimal.args);
     _ = args.next();
     while (args.next()) |a| {
@@ -37,11 +38,22 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, a, "--socket")) {
             use_ipc = true;
             sock_path = args.next();
+        } else if (std.mem.eql(u8, a, "--geoip")) {
+            geoip_dir = args.next();
+        }
+    }
+    // Same default as surveyor: in-process capture enriches locally (parity); over
+    // IPC the names arrive on the frames and this dir is never touched.
+    var geoip_buf: [1024]u8 = undefined;
+    if (geoip_dir == null) {
+        if (init.minimal.environ.getPosix("HOME")) |home| {
+            geoip_dir = std.fmt.bufPrint(&geoip_buf, "{s}/.local/share/cartograph/geoip", .{home}) catch null;
         }
     }
 
     var app = try App.init(gpa, io);
     defer app.deinit();
+    app.geoip_dir = geoip_dir;
 
     if (use_ipc) {
         // Frames arrive on stdin (the pipe) or a Unix socket (the daemon boundary) —
@@ -64,6 +76,8 @@ const App = struct {
     out_buf: []u8,
     session: SessionState = .{},
     upstream_fd: ?std.posix.fd_t = null, // writable socket → surveyor, when over IPC
+    geoip_dir: ?[]const u8 = null,
+    enricher: ?capture.enrich.Enricher = null, // in-process mode only (IPC flows arrive enriched)
     quit: bool = false,
 
     fn init(gpa: std.mem.Allocator, io: std.Io) !App {
@@ -80,6 +94,7 @@ const App = struct {
     }
 
     fn deinit(self: *App) void {
+        if (self.enricher) |*e| e.deinit();
         self.table.deinit();
         self.tm.deinit();
         self.gpa.free(self.out_buf);
@@ -148,6 +163,7 @@ const App = struct {
     fn runLocal(self: *App) !void {
         var cap = try capture.Capturer.init(self.gpa, self.io);
         defer cap.deinit();
+        self.enricher = capture.enrich.Enricher.init(self.gpa, self.io, self.geoip_dir);
 
         try self.enterScreen();
         defer self.leaveScreen();
@@ -220,6 +236,7 @@ const App = struct {
         const sz = self.tm.size();
         const flows = try self.table.snapshot(self.gpa);
         defer self.gpa.free(flows);
+        if (self.enricher) |*e| e.decorate(flows, capture.nowMs(self.io)); // parity with surveyor's post-pass
         try render(self.w(), flows, sz, self.session, mode_label);
         try self.w().flush();
     }
@@ -265,6 +282,7 @@ fn render(w: *Writer, flows: []*Flow, sz: term.Size, session: SessionState, mode
     try col(w, "APP", 15);
     try w.writeAll("  ");
     try col(w, "ENDPOINT", 32);
+    if (set.contains(.endpoint)) try col(w, "WHO", 24);
     if (set.contains(.volume)) {
         try col(w, "THROUGHPUT", cartograph.sparkline.spark_len + 12);
         try col(w, "TOTAL", 10);
@@ -309,12 +327,27 @@ fn renderRow(w: *Writer, f: *Flow, set: lens.Set) !void {
     try col(w, f.name(), 13);
     try w.print(" {s}{s} ", .{ cat.glyph(), term.reset });
 
-    // endpoint (remote), category-colored
+    // endpoint (remote): the S1 name when known, the bare address otherwise —
+    // category-colored either way, port kept visible
     var ebuf: [64]u8 = undefined;
-    const ep = cartograph.endpoint(&ebuf, f.key.remote, f.key.remote_port);
+    const ep = if (f.remote_name.len > 0) blk: {
+        var ew = Writer.fixed(&ebuf);
+        const name = f.remote_name.slice();
+        ew.writeAll(name[0..@min(name.len, 25)]) catch {};
+        ew.print(":{d}", .{f.key.remote_port}) catch {};
+        break :blk ew.buffered();
+    } else cartograph.endpoint(&ebuf, f.key.remote, f.key.remote_port);
     try w.writeAll(cat.ansi());
     try col(w, ep, 32);
     try w.writeAll(term.reset);
+
+    if (set.contains(.endpoint)) {
+        var wbuf: [48]u8 = undefined;
+        const who = f.whoDisplay(&wbuf);
+        try w.writeAll(term.dim);
+        try col(w, who[0..@min(who.len, 23)], 24);
+        try w.writeAll(term.reset);
+    }
 
     if (set.contains(.volume)) {
         // sparkline + live rate

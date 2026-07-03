@@ -10,6 +10,7 @@ const cartograph = @import("cartograph");
 
 pub const diag = @import("diag.zig");
 pub const proc = @import("proc.zig");
+pub const enrich = @import("enrich.zig");
 
 const FlowTable = cartograph.FlowTable;
 const Observation = cartograph.Observation;

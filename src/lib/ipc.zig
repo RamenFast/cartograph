@@ -24,7 +24,10 @@ const FlowKey = flow.FlowKey;
 /// Bumped to 2 in M2: the act-ontology frames (user_state/rule/reading/ruling) are
 /// defined. They were added **additively** — a v1 reader skips them as unknown frames
 /// (FrameType is non-exhaustive), so the bump is informative, not a break.
-pub const protocol_version: u16 = 2;
+/// Bumped to 3 in V1/S1: `flow_upsert` grew the remote-identity fields (remote_name/
+/// asn/as_org/country), appended as **trailing fields** — a v3 reader decodes their
+/// absence from a v2 frame as the zero values, so this bump is informative too.
+pub const protocol_version: u16 = 3;
 
 /// Upper bound on a single encoded frame, so readers can size their buffer.
 pub const max_frame = 1024;
@@ -98,6 +101,13 @@ fn writeFlow(w: *Writer, f: Flow) Writer.Error!void {
     try w.writeAll(f.comm.slice());
     try w.writeInt(u16, f.exe.len, .little);
     try w.writeAll(f.exe.slice());
+    // v3 trailing identity (S1) — appended, never reordered (the additivity contract)
+    try w.writeByte(f.remote_name.len);
+    try w.writeAll(f.remote_name.slice());
+    try w.writeInt(u32, f.asn, .little);
+    try w.writeByte(f.as_org.len);
+    try w.writeAll(f.as_org.slice());
+    try w.writeAll(&f.country);
 }
 
 fn readFlow(r: *Reader) !Flow {
@@ -119,6 +129,17 @@ fn readFlow(r: *Reader) !Flow {
     f.comm.set(try r.take(comm_len));
     const exe_len = try r.takeInt(u16, .little);
     f.exe.set(try r.take(exe_len));
+    // v3 trailing identity — absent from a v2 frame, in which case the payload ends
+    // exactly here and the fields keep their zero defaults (additive, not a break).
+    const name_len = r.takeByte() catch |err| switch (err) {
+        error.EndOfStream => return f,
+        else => |e| return e,
+    };
+    f.remote_name.set(try r.take(name_len));
+    f.asn = try r.takeInt(u32, .little);
+    const org_len = try r.takeByte();
+    f.as_org.set(try r.take(org_len));
+    f.country = (try r.takeArray(2)).*;
     return f;
 }
 
@@ -481,6 +502,10 @@ test "flow round-trips through a frame" {
     f.fresh = true;
     f.comm.set("claude");
     f.exe.set("/usr/lib/claude/claude");
+    f.remote_name.set("api.anthropic.com");
+    f.asn = 13335;
+    f.as_org.set("CLOUDFLARENET");
+    f.country = .{ 'U', 'S' };
 
     var buf: [max_frame]u8 = undefined;
     var w = Writer.fixed(&buf);
@@ -498,6 +523,44 @@ test "flow round-trips through a frame" {
     try t.expectEqualStrings("/usr/lib/claude/claude", g.exe.slice());
     try t.expectEqual(f.key.remote.bytes, g.key.remote.bytes);
     try t.expect(g.fresh);
+    try t.expectEqualStrings("api.anthropic.com", g.remote_name.slice());
+    try t.expectEqual(@as(u32, 13335), g.asn);
+    try t.expectEqualStrings("CLOUDFLARENET", g.as_org.slice());
+    try t.expectEqualStrings("US", &g.country);
+}
+
+test "a v2 flow frame (no identity tail) decodes with identity at its zero values" {
+    const t = std.testing;
+    var f: Flow = .{ .key = .{
+        .proto = .tcp,
+        .local = flow.Addr.v4(.{ 192, 168, 1, 9 }),
+        .local_port = 40000,
+        .remote = flow.Addr.v4(.{ 1, 1, 1, 1 }),
+        .remote_port = 443,
+    } };
+    f.comm.set("curl");
+
+    // Encode a v3 frame, then rewrite it as its v2 truncation: chop the identity tail
+    // off the payload and fix the length prefix — byte-identical to what a v2 producer
+    // sent, because the tail is strictly appended.
+    var buf: [max_frame]u8 = undefined;
+    var w = Writer.fixed(&buf);
+    try sendFlowUpsert(&w, f);
+    const wire = w.buffered();
+    const tail_len = 1 + f.remote_name.len + 4 + 1 + f.as_org.len + 2; // name+asn+org+country
+    const v2_len = wire.len - tail_len;
+    var v2: [max_frame]u8 = undefined;
+    @memcpy(v2[0..v2_len], wire[0..v2_len]);
+    const old_frame_len = std.mem.readInt(u32, v2[0..4], .little);
+    std.mem.writeInt(u32, v2[0..4], old_frame_len - @as(u32, @intCast(tail_len)), .little);
+
+    var r = Reader.fixed(v2[0..v2_len]);
+    const g = (try readFrame(&r)).?.flow_upsert;
+    try t.expectEqualStrings("curl", g.comm.slice());
+    try t.expectEqual(@as(u8, 0), g.remote_name.len);
+    try t.expectEqual(@as(u32, 0), g.asn);
+    try t.expectEqual(@as(u8, 0), g.as_org.len);
+    try t.expectEqual([2]u8{ 0, 0 }, g.country);
 }
 
 test "hello, tick, closed, and clean EOF" {

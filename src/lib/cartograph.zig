@@ -19,6 +19,7 @@ pub const ontology = @import("ontology.zig");
 pub const session = @import("session.zig");
 pub const scope = @import("scope.zig");
 pub const focus = @import("focus.zig");
+pub const mmdb = @import("mmdb.zig");
 pub const usock = @import("usock.zig");
 pub const parity = @import("parity.zig");
 

@@ -226,6 +226,12 @@ pub const Flow = struct {
     comm: Str(16) = .{},
     exe: Str(255) = .{},
 
+    // Remote identity (V1 S1) — filled by the enrichment post-pass; empty = unknown.
+    remote_name: Str(128) = .{}, // hostname: rDNS today, SNI/passive-DNS upgrade it (S3)
+    asn: u32 = 0, // autonomous system number; 0 = unknown
+    as_org: Str(64) = .{}, // AS organization ("CLOUDFLARENET", "GOOGLE", ...)
+    country: [2]u8 = .{ 0, 0 }, // ISO 3166-1 alpha-2; zeroes = unknown
+
     rx_bytes: u64 = 0,
     tx_bytes: u64 = 0,
     rx_rate: u32 = 0, // bytes/sec, derived between ticks
@@ -270,6 +276,33 @@ pub const Flow = struct {
     /// (sshd / cups / systemd-resolved / nginx are the security-relevant cases.)
     pub fn isUnattributedDaemon(f: *const Flow) bool {
         return !f.attributed() and f.service() != .unknown;
+    }
+
+    /// The remote's best human name: the enriched hostname when known, else the bare
+    /// address formatted into `buf`. One derivation, so renderers never diverge.
+    pub fn remoteDisplay(f: *const Flow, buf: []u8) []const u8 {
+        if (f.remote_name.len > 0) return f.remote_name.slice();
+        return f.key.remote.fmt(buf);
+    }
+
+    /// The ISO country code, or null while unknown.
+    pub fn countryCode(f: *const Flow) ?[]const u8 {
+        if (f.country[0] == 0) return null;
+        return &f.country;
+    }
+
+    /// "Who is that, in one glance": `AS-org · CC`, whichever parts are known
+    /// ("·" while neither is). One derivation shared by every renderer.
+    pub fn whoDisplay(f: *const Flow, buf: []u8) []const u8 {
+        var w = Writer.fixed(buf);
+        const org = f.as_org.slice();
+        if (org.len > 0) w.writeAll(org) catch {};
+        if (f.countryCode()) |cc| {
+            if (org.len > 0) w.writeAll(" · ") catch {};
+            w.writeAll(cc) catch {};
+        }
+        if (w.buffered().len == 0) return "·";
+        return w.buffered();
     }
 };
 

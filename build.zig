@@ -20,9 +20,12 @@ pub fn build(b: *std.Build) void {
     });
 
     // --- capture: the /proc-based capture core (unprivileged path) -------------
+    // link_libc: enrich.zig resolves rDNS through glibc getnameinfo so names come
+    // from nsswitch (resolved's cache, /etc/hosts, mDNS) — the system's own truth.
     const capture = b.addModule("capture", .{
         .root_source_file = b.path("src/capture/capture.zig"),
         .target = target,
+        .link_libc = true,
         .imports = &.{.{ .name = "cartograph", .module = cartograph }},
     });
 

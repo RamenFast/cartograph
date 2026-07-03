@@ -34,6 +34,7 @@ pub fn main(init: std.process.Init) !void {
     var as_json = false;
     var want_bpf = false;
     var sock_path: ?[]const u8 = null;
+    var geoip_dir: ?[]const u8 = null;
     while (args.next()) |a| {
         if (std.mem.eql(u8, a, "--json")) {
             as_json = true;
@@ -41,15 +42,26 @@ pub fn main(init: std.process.Init) !void {
             want_bpf = true;
         } else if (std.mem.eql(u8, a, "--socket")) {
             sock_path = args.next();
+        } else if (std.mem.eql(u8, a, "--geoip")) {
+            geoip_dir = args.next();
+        }
+    }
+
+    // Default GeoIP location: the XDG data dir scripts/fetch-geoip.sh writes to.
+    // Missing databases degrade loudly inside the enricher — never silently.
+    var geoip_buf: [1024]u8 = undefined;
+    if (geoip_dir == null) {
+        if (init.minimal.environ.getPosix("HOME")) |home| {
+            geoip_dir = std.fmt.bufPrint(&geoip_buf, "{s}/.local/share/cartograph/geoip", .{home}) catch null;
         }
     }
 
     if (std.mem.eql(u8, cmd, "serve")) {
         if (as_json) {
-            if (sock_path) |p| try serveSocketJson(gpa, io, p, want_bpf) else try serveJson(gpa, io, want_bpf);
-        } else if (sock_path) |p| try serveSocket(gpa, io, p, want_bpf) else try serve(gpa, io, want_bpf);
+            if (sock_path) |p| try serveSocketJson(gpa, io, p, want_bpf, geoip_dir) else try serveJson(gpa, io, want_bpf, geoip_dir);
+        } else if (sock_path) |p| try serveSocket(gpa, io, p, want_bpf, geoip_dir) else try serve(gpa, io, want_bpf, geoip_dir);
     } else if (std.mem.eql(u8, cmd, "snapshot")) {
-        try snapshot(gpa, io, as_json, want_bpf);
+        try snapshot(gpa, io, as_json, want_bpf, geoip_dir);
     } else if (std.mem.eql(u8, cmd, "--schema") or std.mem.eql(u8, cmd, "schema")) {
         try printSchema(io);
     } else if (std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "help")) {
@@ -131,6 +143,8 @@ fn usage(io: std.Io) !void {
         \\  surveyor --schema               print the machine-readable contract of every surface
         \\
         \\flags: --bpf (use the eBPF source if caps allow)  --socket <path>  --json
+        \\       --geoip <dir> (ASN+country mmdb dir; default ~/.local/share/cartograph/geoip —
+        \\                      populate it once with scripts/fetch-geoip.sh)
         \\
     );
     try w.flush();
@@ -145,13 +159,16 @@ fn ignoreSigpipe() void {
     std.posix.sigaction(std.posix.SIG.PIPE, &act, null);
 }
 
-/// One-shot, human-readable table — the promoted spike, now tcp6/udp + bytes + RTT.
-/// `as_json` emits NDJSON instead: the agent/script surface (`snapshot --json | jq`).
-fn snapshot(gpa: std.mem.Allocator, io: std.Io, as_json: bool, want_bpf: bool) !void {
+/// One-shot, human-readable table — the promoted spike, now tcp6/udp + bytes + RTT
+/// + names/owners/countries (S1). `as_json` emits NDJSON instead: the agent/script
+/// surface (`snapshot --json | jq`).
+fn snapshot(gpa: std.mem.Allocator, io: std.Io, as_json: bool, want_bpf: bool, geoip_dir: ?[]const u8) !void {
     var src = try openSource(gpa, io, want_bpf);
     defer src.deinit();
     var table = cartograph.FlowTable.init(gpa);
     defer table.deinit();
+    var enricher = capture.enrich.Enricher.init(gpa, io, geoip_dir);
+    defer enricher.deinit();
 
     var closed: std.ArrayList(cartograph.FlowKey) = .empty;
     defer closed.deinit(gpa);
@@ -159,6 +176,15 @@ fn snapshot(gpa: std.mem.Allocator, io: std.Io, as_json: bool, want_bpf: bool) !
 
     const flows = try table.snapshot(gpa);
     defer gpa.free(flows);
+    // One-shot gets one frame, so give rDNS a bounded head start — keep refilling
+    // the small lookup pool until it idles or ~1 s passes. (The serve loops never
+    // wait — names stream in on later ticks there.)
+    enricher.decorate(flows, capture.nowMs(io));
+    var budget: i64 = 1000;
+    while (enricher.resolver.busy() and budget > 0) : (budget -= 100) {
+        enricher.resolver.drainFor(100);
+        enricher.decorate(flows, capture.nowMs(io));
+    }
 
     var buf: [128 * 1024]u8 = undefined;
     const stdout = std.Io.File.stdout();
@@ -182,21 +208,22 @@ fn snapshot(gpa: std.mem.Allocator, io: std.Io, as_json: bool, want_bpf: bool) !
         return;
     }
 
-    try w.print("{s}cartograph · surveyor{s} {s}— live attributed flows (inet_diag + /proc)\n\n{s}", .{ BOLD, RST, DIM, RST });
-    try w.print("{s}{s:<6} {s:<15} {s:<3} {s:<10} {s:<21} {s:<21} {s:>9} {s:>9} {s:>6}{s}\n", .{
-        BOLD, "PID", "COMM", "·", "STATE", "LOCAL", "REMOTE", "RX", "TX", "RTT", RST,
+    try w.print("{s}cartograph · surveyor{s} {s}— live attributed flows (inet_diag + /proc + rDNS/GeoIP)\n\n{s}", .{ BOLD, RST, DIM, RST });
+    try w.print("{s}{s:<6} {s:<15} {s:<3} {s:<10} {s:<21} {s:<27} {s:<24} {s:>9} {s:>9} {s:>6}{s}\n", .{
+        BOLD, "PID", "COMM", "·", "STATE", "LOCAL", "REMOTE", "WHO", "RX", "TX", "RTT", RST,
     });
 
     var attributed: usize = 0;
     var lbuf: [48]u8 = undefined;
-    var rbuf: [48]u8 = undefined;
+    var rbuf: [64]u8 = undefined;
+    var wbuf: [48]u8 = undefined;
     var rxbuf: [16]u8 = undefined;
     var txbuf: [16]u8 = undefined;
     for (flows) |f| {
         if (f.attributed()) attributed += 1;
         const cat = f.category;
         const rtt_ms: f64 = @as(f64, @floatFromInt(f.rtt_us)) / 1000.0;
-        try w.print("{s}{s}{d:<6}{s} {s:<15} {s}{s}{s} {s:<10} {s:<21} {s}{s:<21}{s} {s:>9} {s:>9} ", .{
+        try w.print("{s}{s}{d:<6}{s} {s:<15} {s}{s}{s} {s:<10} {s:<21} {s}{s:<27}{s} {s}{s:<24}{s} {s:>9} {s:>9} ", .{
             cat.ansi(),
             "",
             f.pid,
@@ -209,6 +236,9 @@ fn snapshot(gpa: std.mem.Allocator, io: std.Io, as_json: bool, want_bpf: bool) !
             localStr(f, &lbuf),
             cat.ansi(),
             remoteStr(f, &rbuf),
+            RST,
+            DIM,
+            whoStr(f, &wbuf),
             RST,
             cartograph.humanBytes(&rxbuf, f.rx_bytes),
             cartograph.humanBytes(&txbuf, f.tx_bytes),
@@ -223,11 +253,26 @@ fn snapshot(gpa: std.mem.Allocator, io: std.Io, as_json: bool, want_bpf: bool) !
     try w.flush();
 }
 
+/// The shared `AS-org · CC` derivation, truncated to the snapshot's WHO column.
+fn whoStr(f: *cartograph.Flow, buf: []u8) []const u8 {
+    const s = f.whoDisplay(buf);
+    return s[0..@min(s.len, 24)];
+}
+
 fn localStr(f: *cartograph.Flow, buf: []u8) []const u8 {
     return cartograph.endpoint(buf, f.key.local, f.key.local_port);
 }
 
+/// The S1 headline: `github.com:443` when we know the name, the address otherwise.
 fn remoteStr(f: *cartograph.Flow, buf: []u8) []const u8 {
+    if (f.remote_name.len > 0) {
+        var w = std.Io.Writer.fixed(buf);
+        const name = f.remote_name.slice();
+        const max_name = 26 - 6; // keep :port visible in the 27-wide column
+        w.writeAll(name[0..@min(name.len, max_name)]) catch {};
+        w.print(":{d}", .{f.key.remote_port}) catch {};
+        return w.buffered();
+    }
     return cartograph.endpoint(buf, f.key.remote, f.key.remote_port);
 }
 
@@ -309,11 +354,13 @@ const ClientLink = struct {
 /// also drains upstream `user_state` frames and echoes the authoritative session back
 /// (the bidirectional Seam-C path, D22). A pipe (`serve` to stdout) has no upstream, so
 /// `in_fd` is null and the loop just paces the 1 Hz capture.
-fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, in_fd: ?std.posix.fd_t, want_bpf: bool) !void {
+fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, in_fd: ?std.posix.fd_t, want_bpf: bool, geoip_dir: ?[]const u8) !void {
     var src = try openSource(gpa, io, want_bpf);
     defer src.deinit();
     var table = cartograph.FlowTable.init(gpa);
     defer table.deinit();
+    var enricher = capture.enrich.Enricher.init(gpa, io, geoip_dir);
+    defer enricher.deinit();
 
     var link: ?ClientLink = if (in_fd) |fd| ClientLink.init(gpa, fd) else null;
     defer if (link) |*l| l.deinit();
@@ -334,6 +381,7 @@ fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, in_fd: ?std
 
             const flows = try table.snapshot(gpa);
             defer gpa.free(flows);
+            enricher.decorate(flows, now); // S1: names/owners ride the same frames
             for (flows) |f| try ipc.sendFlowUpsert(w, f.*);
             for (closed.items) |k| try ipc.sendFlowClosed(w, k);
 
@@ -363,16 +411,16 @@ fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, in_fd: ?std
 
 /// `surveyor serve` — frames to stdout: the pipe path, `surveyor serve | cartograph --ipc`.
 /// A pipe is one-way, so there is no upstream `user_state` channel here (in_fd = null).
-fn serve(gpa: std.mem.Allocator, io: std.Io, want_bpf: bool) !void {
+fn serve(gpa: std.mem.Allocator, io: std.Io, want_bpf: bool, geoip_dir: ?[]const u8) !void {
     var buf: [256 * 1024]u8 = undefined;
     var fw = std.Io.File.stdout().writer(io, &buf);
-    try streamLoop(gpa, io, &fw.interface, null, want_bpf);
+    try streamLoop(gpa, io, &fw.interface, null, want_bpf, geoip_dir);
 }
 
 /// `surveyor serve --socket <path>` — the real privilege boundary. Bind a Unix socket
 /// and serve each connecting (unprivileged) frontend the same frames. `setcap` raises
 /// *this* process's capabilities (M2 eBPF); the frontend across the socket never does.
-fn serveSocket(gpa: std.mem.Allocator, io: std.Io, path: []const u8, want_bpf: bool) !void {
+fn serveSocket(gpa: std.mem.Allocator, io: std.Io, path: []const u8, want_bpf: bool, geoip_dir: ?[]const u8) !void {
     const lfd = try cartograph.usock.listen(path);
     defer cartograph.usock.close(lfd);
 
@@ -390,7 +438,7 @@ fn serveSocket(gpa: std.mem.Allocator, io: std.Io, path: []const u8, want_bpf: b
         // The socket is full-duplex: we write flows down it and read upstream user_state
         // (profile/lens toggles) back up it (D22). A client that hangs up surfaces as a
         // write error or `error.Closed`; either way, just wait for the next.
-        streamLoop(gpa, io, &fw.interface, cfd, want_bpf) catch {};
+        streamLoop(gpa, io, &fw.interface, cfd, want_bpf, geoip_dir) catch {};
     }
 }
 
@@ -399,11 +447,13 @@ fn serveSocket(gpa: std.mem.Allocator, io: std.Io, path: []const u8, want_bpf: b
 /// JSON object per line so an agent watches the *exact same live truth* the GUI renders —
 /// `surveyor serve --json | jq -c 'select(.ev=="flow" and .fresh)'` — instead of re-polling
 /// `snapshot`. Read-only: a watching agent has no upstream channel, so there is no duplex.
-fn streamLoopJson(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, want_bpf: bool) !void {
+fn streamLoopJson(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, want_bpf: bool, geoip_dir: ?[]const u8) !void {
     var src = try openSource(gpa, io, want_bpf);
     defer src.deinit();
     var table = cartograph.FlowTable.init(gpa);
     defer table.deinit();
+    var enricher = capture.enrich.Enricher.init(gpa, io, geoip_dir);
+    defer enricher.deinit();
     const J = cartograph.json;
 
     try J.writeHelloEvent(w, ipc.protocol_version);
@@ -427,6 +477,7 @@ fn streamLoopJson(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, want_bp
 
             const flows = try table.snapshot(gpa);
             defer gpa.free(flows);
+            enricher.decorate(flows, now); // S1: the agent sees the same names
             for (flows) |f| {
                 try J.writeFlowEvent(w, f);
                 try w.writeByte('\n');
@@ -446,15 +497,15 @@ fn streamLoopJson(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, want_bp
 }
 
 /// `surveyor serve --json` — the live NDJSON event stream to stdout.
-fn serveJson(gpa: std.mem.Allocator, io: std.Io, want_bpf: bool) !void {
+fn serveJson(gpa: std.mem.Allocator, io: std.Io, want_bpf: bool, geoip_dir: ?[]const u8) !void {
     var buf: [256 * 1024]u8 = undefined;
     var fw = std.Io.File.stdout().writer(io, &buf);
-    try streamLoopJson(gpa, io, &fw.interface, want_bpf);
+    try streamLoopJson(gpa, io, &fw.interface, want_bpf, geoip_dir);
 }
 
 /// `surveyor serve --json --socket <path>` — the same NDJSON stream over a Unix socket, so a
 /// remote/headless agent watches the live box exactly as `serve --json | jq` does locally.
-fn serveSocketJson(gpa: std.mem.Allocator, io: std.Io, path: []const u8, want_bpf: bool) !void {
+fn serveSocketJson(gpa: std.mem.Allocator, io: std.Io, path: []const u8, want_bpf: bool, geoip_dir: ?[]const u8) !void {
     const lfd = try cartograph.usock.listen(path);
     defer cartograph.usock.close(lfd);
     while (true) {
@@ -463,7 +514,7 @@ fn serveSocketJson(gpa: std.mem.Allocator, io: std.Io, path: []const u8, want_bp
         var buf: [256 * 1024]u8 = undefined;
         var cf: std.Io.File = .{ .handle = cfd, .flags = .{ .nonblocking = false } };
         var fw = cf.writer(io, &buf);
-        streamLoopJson(gpa, io, &fw.interface, want_bpf) catch {};
+        streamLoopJson(gpa, io, &fw.interface, want_bpf, geoip_dir) catch {};
     }
 }
 

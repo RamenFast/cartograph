@@ -79,6 +79,10 @@ silent one (a parser that breaks tomorrow on today's output is a Ti bug, and we 
 | `exe` | string | resolved executable path (may be empty) |
 | `local` / `remote` | string | bare address, **no brackets** (v4 dotted, v6 compressed) |
 | `local_port` / `remote_port` | number | port, separate from the address |
+| `remote_name` | string | the remote's hostname (rDNS today; SNI/passive-DNS upgrade it at S3); empty = unknown |
+| `asn` | number | autonomous system number of the remote; `0` = unknown |
+| `as_org` | string | AS organization — *who owns the remote* (`"GitHub, Inc."`); empty = unknown |
+| `country` | string | ISO 3166-1 alpha-2 of the remote (`"US"`); empty = unknown |
 | `rx_bytes` / `tx_bytes` | number | cumulative bytes (inet_diag; TCP) |
 | `rx_rate` / `tx_rate` | number | bytes/sec, derived between ticks |
 | `rtt_us` | number | smoothed RTT, microseconds (`0` if unknown) |

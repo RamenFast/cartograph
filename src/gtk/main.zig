@@ -224,6 +224,7 @@ fn renderMarkup(w: *Writer, flows: []*Flow, session: SessionState) Writer.Error!
     try w.print("<span foreground=\"{s}\">  ", .{dim});
     try col(w, "APP", 15);
     try col(w, "ENDPOINT", 32);
+    if (show_endpoint) try col(w, "WHO", 24);
     if (show_volume) {
         try col(w, "THROUGHPUT", 12);
         try col(w, "TOTAL", 10);
@@ -250,9 +251,22 @@ fn renderMarkup(w: *Writer, flows: []*Flow, session: SessionState) Writer.Error!
         try col(w, f.name(), 13);
         try w.print(" {s}</span> ", .{cat.glyph()});
 
-        // remote endpoint, category colour
-        const ep = cartograph.endpoint(&ebuf, f.key.remote, f.key.remote_port);
+        // remote endpoint: the S1 name when known, the bare address otherwise —
+        // same derivation as the TUI row (render parity, R5)
+        const ep = if (f.remote_name.len > 0) blk: {
+            var ew = Writer.fixed(&ebuf);
+            const name = f.remote_name.slice();
+            ew.writeAll(name[0..@min(name.len, 25)]) catch {};
+            ew.print(":{d}", .{f.key.remote_port}) catch {};
+            break :blk ew.buffered();
+        } else cartograph.endpoint(&ebuf, f.key.remote, f.key.remote_port);
         try span(w, cat.hex(), ep, 32);
+
+        if (show_endpoint) {
+            var wbuf: [48]u8 = undefined;
+            const who = f.whoDisplay(&wbuf);
+            try span(w, dim, who[0..@min(who.len, 23)], 24);
+        }
 
         if (show_volume) {
             // throughput (rate-coloured), total bytes
