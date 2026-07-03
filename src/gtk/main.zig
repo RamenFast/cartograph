@@ -28,6 +28,7 @@ const std = @import("std");
 const cartograph = @import("cartograph");
 
 const Writer = std.Io.Writer;
+const flow = cartograph.flow;
 const ipc = cartograph.ipc;
 const lens = cartograph.lens;
 const ontology = cartograph.ontology;
@@ -98,6 +99,10 @@ extern fn gtk_list_box_invalidate_sort(box: ?*anyopaque) void;
 extern fn gtk_list_box_row_new() ?*anyopaque;
 extern fn gtk_list_box_row_set_child(row: ?*anyopaque, child: ?*anyopaque) void;
 
+extern fn gtk_image_new() ?*anyopaque;
+extern fn gtk_image_set_from_icon_name(image: ?*anyopaque, icon_name: ?[*:0]const u8) void;
+extern fn gtk_image_set_pixel_size(image: ?*anyopaque, pixel_size: c_int) void;
+
 extern fn gtk_label_new(str: ?[*:0]const u8) ?*anyopaque;
 extern fn gtk_label_set_markup(label: ?*anyopaque, markup: [*:0]const u8) void;
 extern fn gtk_label_set_xalign(label: ?*anyopaque, xalign: f32) void;
@@ -125,11 +130,14 @@ const dim = "#8a8a8a"; // grey: idle / structural
 
 // ---- app state --------------------------------------------------------------
 
-/// One live flow's widgets: the ListBox row and the label inside it. Updated in
-/// place every tick — the anti-"rebuild the world as one string" (V1.md S2).
+/// One live flow's widgets: the ListBox row, its app-icon image, and the text
+/// label. Updated in place every tick — the anti-"rebuild the world as one
+/// string" (V1.md S2). The icon (S4) is set only when it changes.
 const Row = struct {
     row: ?*anyopaque,
+    image: ?*anyopaque,
     label: ?*anyopaque,
+    icon: flow.Str(128) = .{}, // last icon name set, to skip redundant updates
 };
 
 const App = struct {
@@ -144,6 +152,7 @@ const App = struct {
     why_label: ?*anyopaque = null, // the docked narration panel
     rows: std.AutoHashMapUnmanaged(FlowKey, Row) = .empty,
     row_keys: std.AutoHashMapUnmanaged(usize, FlowKey) = .empty, // row widget ptr → key
+    icons: cartograph.appicon.Index, // exe/comm → XDG icon name (S4)
     selected_key: ?FlowKey = null,
     suppress_select: bool = false, // guard against unselect feedback while clearing
     now_ms: i64 = 0, // surveyor's clock, from tick frames (anchors the why ages)
@@ -153,9 +162,17 @@ const App = struct {
     fn deinit(self: *App) void {
         self.rows.deinit(self.gpa);
         self.row_keys.deinit(self.gpa);
+        self.icons.deinit();
         self.table.deinit();
         self.frames.deinit();
         self.gpa.free(self.scratch);
+    }
+
+    /// The app icon name for a flow: the resolved XDG name, else a category-themed
+    /// symbolic fallback so every row still has a visual anchor (S4). Returns the
+    /// bare name (not yet NUL-terminated); `setRowIcon` terminates it for GTK.
+    fn iconFor(self: *const App, f: *const Flow) []const u8 {
+        return self.icons.lookup(f) orelse categoryIcon(f.category);
     }
 
     /// Send a user-state change upstream to surveyor (no-op over a one-way pipe). The
@@ -222,20 +239,41 @@ const App = struct {
         for (flows, 0..) |f, rank| {
             const gop = self.rows.getOrPut(self.gpa, f.key) catch continue;
             if (!gop.found_existing) {
+                // [icon][label] in a horizontal box — the app's real face + its data (S4)
+                const image = gtk_image_new();
+                gtk_image_set_pixel_size(image, 18);
                 const label = gtk_label_new(null);
                 gtk_label_set_xalign(label, 0);
+                const hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+                gtk_widget_set_margin_start(hbox, 6);
+                gtk_box_append(hbox, image);
+                gtk_box_append(hbox, label);
                 const row = gtk_list_box_row_new();
-                gtk_list_box_row_set_child(row, label);
+                gtk_list_box_row_set_child(row, hbox);
                 gtk_list_box_append(self.listbox, row);
-                gop.value_ptr.* = .{ .row = row, .label = label };
+                gop.value_ptr.* = .{ .row = row, .image = image, .label = label };
                 self.row_keys.put(self.gpa, @intFromPtr(row), f.key) catch {};
             }
+            self.setRowIcon(gop.value_ptr, f);
             self.setLabelMarkup(gop.value_ptr.label, writeRowMarkup, .{ f, set });
             // rank drives the ListBox sort (busiest first); +1 keeps 0 ≠ "no data"
             g_object_set_data(gop.value_ptr.row, "cg-rank", @ptrFromInt(rank + 1));
         }
         gtk_list_box_invalidate_sort(self.listbox);
         self.redrawWhy(flows);
+    }
+
+    /// Set a row's app icon, skipping GTK work when the name hasn't changed (late
+    /// attribution can rename a `?` row mid-life, so this can update).
+    fn setRowIcon(self: *App, r: *Row, f: *const Flow) void {
+        const name = self.iconFor(f);
+        if (std.mem.eql(u8, name, r.icon.slice())) return;
+        r.icon.set(name);
+        var nz: [128]u8 = undefined;
+        if (name.len >= nz.len) return;
+        @memcpy(nz[0..name.len], name);
+        nz[name.len] = 0;
+        gtk_image_set_from_icon_name(r.image, @ptrCast(&nz));
     }
 
     /// The docked narration: the selected flow via `cartograph.why` (the same pure
@@ -399,7 +437,17 @@ fn writeWhyMarkup(w: *Writer, selected: ?*Flow, session: SessionState, now_ms: i
         var hw = Writer.fixed(&hb);
         cartograph.why.headline(&hw, f) catch {};
         try esc(w, hw.buffered());
-        try w.writeAll("</b>\n\n");
+        try w.writeAll("</b>\n");
+
+        // badges: the category chip, and (for a listener) the exposure risk badge —
+        // the design-language colour axis made visible (S4, DESIGN-LANGUAGE §2/§4)
+        const cat = f.category;
+        try w.print("<span foreground=\"{s}\">{s} {s}</span>", .{ cat.hex(), cat.glyph(), cat.label() });
+        if (f.isListen()) {
+            const exp = f.exposure();
+            try w.print("   <span background=\"{s}\" foreground=\"#000000\"> {s} </span>", .{ exp.hex(), exp.label() });
+        }
+        try w.writeAll("\n\n");
 
         var db: [2048]u8 = undefined;
         var dw = Writer.fixed(&db);
@@ -417,6 +465,24 @@ fn writeWhyMarkup(w: *Writer, selected: ?*Flow, session: SessionState, now_ms: i
 fn rateColor(f: *Flow) []const u8 {
     if (f.throughput() == 0) return dim;
     return if (f.tx_rate > f.rx_rate) tan else sky;
+}
+
+/// A stock symbolic icon per category — the fallback when no `.desktop` entry
+/// names the process (a daemon, a `?` flow). Every icon here ships with the
+/// standard Adwaita/hicolor theme, so a row always has a visual anchor (S4).
+fn categoryIcon(c: cartograph.Category) [:0]const u8 {
+    return switch (c) {
+        .web, .internet => "web-browser-symbolic",
+        .dns => "network-server-symbolic",
+        .lan => "network-workgroup-symbolic",
+        .loopback => "computer-symbolic",
+        .listen => "network-wired-symbolic",
+        .mail => "mail-unread-symbolic",
+        .ssh => "utilities-terminal-symbolic",
+        .ntp => "alarm-symbolic",
+        .multicast => "network-transmit-receive-symbolic",
+        .unknown => "network-idle-symbolic",
+    };
 }
 
 // ---- GTK glue ---------------------------------------------------------------
@@ -612,12 +678,16 @@ pub fn main(init: std.process.Init) !void {
     defer if (sock_path != null) cartograph.usock.close(fd);
     setNonBlocking(fd);
 
+    var icons = cartograph.appicon.Index.init(gpa);
+    icons.scan(io, init.minimal.environ.getPosix("HOME")); // XDG .desktop → icon names (S4)
+
     var app: App = .{
         .gpa = gpa,
         .table = FlowTable.init(gpa),
         .fd = fd,
         // A socket is full-duplex, so toggles can travel upstream (D22). A pipe is one-way.
         .upstream_fd = if (sock_path != null) fd else null,
+        .icons = icons,
         .frames = ipc.FrameStream.init(gpa),
         .scratch = try gpa.alloc(u8, 512 * 1024),
     };

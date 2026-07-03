@@ -231,6 +231,19 @@ pub const Exposure = enum(u8) {
             .internet => "internet",
         };
     }
+
+    /// The risk-badge colour for a listener's exposure (V1/S4): safe→green,
+    /// network→amber, internet→alert-red. `#rrggbb`, same palette basis as
+    /// `Category.hex()` so the design language stays one system (D14). `.none`
+    /// returns grey — a non-listener has no attack surface of its own.
+    pub fn hex(e: Exposure) []const u8 {
+        return switch (e) {
+            .none => "#8a8a8a", // grey (not a listener)
+            .loopback => "#87d787", // green — only this box can reach it
+            .network => "#ffaf00", // amber — your LAN can reach it
+            .internet => "#ff5f5f", // alert red — the world can reach it
+        };
+    }
 };
 
 pub fn exposure(key: flow.FlowKey, state: flow.TcpState) Exposure {

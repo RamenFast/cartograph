@@ -21,6 +21,7 @@ pub const scope = @import("scope.zig");
 pub const focus = @import("focus.zig");
 pub const mmdb = @import("mmdb.zig");
 pub const why = @import("why.zig");
+pub const appicon = @import("appicon.zig");
 pub const fmtutil = @import("fmt.zig");
 pub const usock = @import("usock.zig");
 pub const parity = @import("parity.zig");
