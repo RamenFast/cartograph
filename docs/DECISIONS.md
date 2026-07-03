@@ -299,6 +299,23 @@ separate decision — D25 does not extend to it. **Concrete consequence (R3):** 
 command channel as *"agent writes → it applies → everyone sees it → it's undoable,"* with **no
 auth/consent handshake** — the safety budget goes into visibility + reversibility (D14), not gates.
 
+## D26 — V1 scope: one shippable loop; `atlas` sequenced after, not cancelled
+Ratified 2026-07-03 (proposed by the V1 audit, docs/V1.md; Ben delegated the call). **V1 is
+one loop done beautifully:** *see, live and with real names, every process on this machine and
+who it is talking to — and click any flow to know why.* Four steps, each ending shippable:
+**S1** real identity (rDNS + offline GeoIP/ASN → `name (org · CC)`), **S2** a real GTK app
+(`ColumnView` + selection + the docked "Why" panel, wired to the D24 focus cursor), **S3**
+realtime for real (eBPF hybrid fusion, UDP/QUIC bytes, passive-DNS/SNI true hostnames),
+**S4** the visual identity layer (app icons, category/risk badges).
+
+**Deferred past V1** (sequenced, not cancelled — each lands as an addition thanks to the
+`Source` seam, trailing-field frame additivity, and the `Focus` seam): the constellation map,
+`atlas`/BEAM multi-observer fabric, DVR/persistence history, LLM explain, XDP enforcement,
+deep payload capture. **The atlas call specifically:** the agent-native NDJSON surface already
+covers "me + my agent" co-observation single-socket; `atlas` remains essential to the *maximal*
+vision (D9 amended stands) and is the first thing V1+1 revisits when multi-observer presence
+is real. Full reasoning: docs/V1.md.
+
 ---
 
 <a id="install"></a>
