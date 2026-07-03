@@ -40,6 +40,7 @@ fn fillAddr(path: []const u8) !Addr {
 /// Bind a listening socket at `path`, unlinking any stale socket file first. Returns
 /// the listen fd; `accept` it for client connections.
 pub fn listen(path: []const u8) !i32 {
+    const a = try fillAddr(path); // validates length BEFORE any copy — a long path is an error, not a panic
     const fd: i32 = @intCast(try ok(linux.socket(AF_UNIX, SOCK_STREAM, 0)));
     errdefer _ = linux.close(fd);
 
@@ -47,8 +48,6 @@ pub fn listen(path: []const u8) !i32 {
     @memcpy(pz[0..path.len], path);
     pz[path.len] = 0;
     _ = linux.unlink(@ptrCast(&pz)); // best effort; fine if it didn't exist
-
-    const a = try fillAddr(path);
     _ = try ok(linux.bind(fd, @ptrCast(&a.addr), a.len));
     _ = try ok(linux.listen(fd, 8));
     return fd;

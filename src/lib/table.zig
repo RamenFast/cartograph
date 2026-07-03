@@ -24,6 +24,8 @@ pub const Observation = struct {
     inode: u64 = 0,
     comm: []const u8 = "",
     exe: []const u8 = "",
+    ppid: u32 = 0,
+    pcomm: []const u8 = "",
     rx_bytes: u64 = 0,
     tx_bytes: u64 = 0,
     rtt_us: u32 = 0,
@@ -68,6 +70,8 @@ pub const FlowTable = struct {
             f.inode = obs.inode;
             f.comm.set(obs.comm);
             f.exe.set(obs.exe);
+            f.ppid = obs.ppid;
+            f.pcomm.set(obs.pcomm);
             f.rx_bytes = obs.rx_bytes;
             f.tx_bytes = obs.tx_bytes;
             f.rtt_us = obs.rtt_us;
@@ -104,6 +108,8 @@ pub const FlowTable = struct {
             f.inode = obs.inode;
             f.comm.set(obs.comm);
             f.exe.set(obs.exe);
+            f.ppid = obs.ppid;
+            f.pcomm.set(obs.pcomm);
         }
         e.last_gen = self.gen;
     }

@@ -60,6 +60,10 @@ fn writeFlowFields(w: *Writer, f: *const Flow, lead_comma: bool) Writer.Error!vo
     try str(w, f.comm.slice());
     try field(w, "exe", true);
     try str(w, f.exe.slice());
+    try field(w, "ppid", true);
+    try w.print("{d}", .{f.ppid});
+    try field(w, "pcomm", true);
+    try str(w, f.pcomm.slice());
     try field(w, "local", true);
     try str(w, f.key.local.fmt(&ab));
     try field(w, "local_port", true);
@@ -241,6 +245,8 @@ pub fn writeSchema(w: *Writer) Writer.Error!void {
         .{ "uid", "number", "owning user id" },
         .{ "comm", "string", "process short name (may be empty)" },
         .{ "exe", "string", "resolved executable path (may be empty)" },
+        .{ "ppid", "number", "parent pid (what launched this); 0 = unknown" },
+        .{ "pcomm", "string", "parent process short name; empty = unknown" },
         .{ "local", "string", "bare address, no brackets (v4 dotted, v6 compressed)" },
         .{ "local_port", "number", "" },
         .{ "remote", "string", "bare address, no brackets" },
@@ -458,7 +464,7 @@ test "schema is valid JSON and its enums match the code (no drift)" {
     defer p.deinit();
     const root = p.value.object;
     // the schema describes every flow field the writer emits
-    try t.expectEqual(@as(usize, 25), root.get("flow_fields").?.array.items.len);
+    try t.expectEqual(@as(usize, 27), root.get("flow_fields").?.array.items.len);
     // and the category vocabulary is generated from the enum, so counts must agree
     const cats = root.get("enums").?.object.get("category").?.array;
     try t.expectEqual(std.enums.values(identity.Category).len, cats.items.len);

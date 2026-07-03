@@ -225,6 +225,8 @@ pub const Flow = struct {
     inode: u64 = 0,
     comm: Str(16) = .{},
     exe: Str(255) = .{},
+    ppid: u32 = 0, // parent pid — "what launched this?"; 0 = unknown
+    pcomm: Str(16) = .{}, // parent comm ("steam", "systemd", ...)
 
     // Remote identity (V1 S1) — filled by the enrichment post-pass; empty = unknown.
     remote_name: Str(128) = .{}, // hostname: rDNS today, SNI/passive-DNS upgrade it (S3)

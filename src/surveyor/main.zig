@@ -299,6 +299,9 @@ fn sendSession(w: *std.Io.Writer, s: cartograph.SessionState) !void {
         if (s.lensOverridden(l))
             try ipc.sendUserState(w, .{ .lens_toggle = .{ .lens = l, .on = s.lenses.contains(l) } });
     }
+    // Inherit-the-cursor (D24/R1): a client that connects mid-session starts where the
+    // session's focus already is, not back at orbit. The default orbit is elided.
+    if (!s.focus.eql(.{})) try ipc.sendUserState(w, .{ .focus = s.focus });
 }
 
 /// The upstream (frontend → surveyor) half of a client connection: the per-connection,

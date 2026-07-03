@@ -78,6 +78,11 @@ const App = struct {
     upstream_fd: ?std.posix.fd_t = null, // writable socket → surveyor, when over IPC
     geoip_dir: ?[]const u8 = null,
     enricher: ?capture.enrich.Enricher = null, // in-process mode only (IPC flows arrive enriched)
+    /// The selected flow (the street-altitude cursor's target). Key-based so it
+    /// survives the table resorting under it every tick.
+    selected_key: ?cartograph.FlowKey = null,
+    /// Row order as of the last draw — what j/k navigate over.
+    last_order: std.ArrayList(cartograph.FlowKey) = .empty,
     quit: bool = false,
 
     fn init(gpa: std.mem.Allocator, io: std.Io) !App {
@@ -95,6 +100,7 @@ const App = struct {
 
     fn deinit(self: *App) void {
         if (self.enricher) |*e| e.deinit();
+        self.last_order.deinit(self.gpa);
         self.table.deinit();
         self.tm.deinit();
         self.gpa.free(self.out_buf);
@@ -123,10 +129,12 @@ const App = struct {
     /// Handle a buffer of key bytes; returns true if anything changed the view. Every
     /// profile/lens change goes through `SessionState` and (over a socket) travels the
     /// `user_state` frame upstream to surveyor — the one write path (D22), so TUI and GTK
-    /// can never fork a private state cache.
+    /// can never fork a private state cache. Selection (j/k/arrows) moves the shared
+    /// cursor (D24): row → street-altitude flow focus → the same `user_state` frame.
     fn handleKeys(self: *App, keys: []const u8) bool {
         var changed = false;
-        for (keys) |k| switch (k) {
+        var i: usize = 0;
+        while (i < keys.len) : (i += 1) switch (keys[i]) {
             'q', 'Q', 3 => self.quit = true, // 3 = Ctrl-C (raw mode)
             'p', 'P', '\t' => {
                 self.session.nextProfile();
@@ -134,7 +142,7 @@ const App = struct {
                 changed = true;
             },
             '1'...'6' => {
-                const idx = k - '1';
+                const idx = keys[i] - '1';
                 if (idx < lens_keys.len) {
                     const l = lens_keys[idx];
                     const on = !self.session.lenses.contains(l);
@@ -143,9 +151,52 @@ const App = struct {
                     changed = true;
                 }
             },
+            'j' => changed = self.moveSelection(1) or changed,
+            'k' => changed = self.moveSelection(-1) or changed,
+            0x1b => {
+                // ESC [ A/B = arrow up/down; a bare ESC clears the selection (back to orbit)
+                if (i + 2 < keys.len and keys[i + 1] == '[' and (keys[i + 2] == 'A' or keys[i + 2] == 'B')) {
+                    changed = self.moveSelection(if (keys[i + 2] == 'B') 1 else -1) or changed;
+                    i += 2;
+                } else {
+                    changed = self.clearSelection() or changed;
+                }
+            },
             else => {},
         };
         return changed;
+    }
+
+    /// Move the selection cursor over the last drawn row order; wires the row to the
+    /// shared focus seam (street altitude on that flow) and sends it upstream (D24).
+    fn moveSelection(self: *App, delta: i32) bool {
+        const order = self.last_order.items;
+        if (order.len == 0) return false;
+        var idx: i64 = -1;
+        if (self.selected_key) |sk| {
+            for (order, 0..) |k, j| {
+                if (std.meta.eql(k, sk)) {
+                    idx = @intCast(j);
+                    break;
+                }
+            }
+        }
+        idx = if (idx < 0 and delta < 0) @as(i64, @intCast(order.len - 1)) else idx + delta;
+        idx = std.math.clamp(idx, 0, @as(i64, @intCast(order.len - 1)));
+        const key = order[@intCast(idx)];
+        self.selected_key = key;
+        const f = cartograph.Focus{ .altitude = .street, .target = .{ .flow = key } };
+        self.session.setFocus(f);
+        self.sendUpstream(.{ .focus = f });
+        return true;
+    }
+
+    fn clearSelection(self: *App) bool {
+        if (self.selected_key == null) return false;
+        self.selected_key = null;
+        self.session.setFocus(.{}); // back to the orbit establishing shot
+        self.sendUpstream(.{ .focus = .{} });
+        return true;
     }
 
     /// Send a user-state change upstream to surveyor (no-op without a writable socket:
@@ -237,14 +288,16 @@ const App = struct {
         const flows = try self.table.snapshot(self.gpa);
         defer self.gpa.free(flows);
         if (self.enricher) |*e| e.decorate(flows, capture.nowMs(self.io)); // parity with surveyor's post-pass
-        try render(self.w(), flows, sz, self.session, mode_label);
+        self.last_order.clearRetainingCapacity(); // what j/k navigate next
+        for (flows) |f| try self.last_order.append(self.gpa, f.key);
+        try render(self.w(), flows, sz, self.session, mode_label, self.selected_key, capture.nowMs(self.io));
         try self.w().flush();
     }
 };
 
 // ---- rendering --------------------------------------------------------------
 
-fn render(w: *Writer, flows: []*Flow, sz: term.Size, session: SessionState, mode_label: []const u8) !void {
+fn render(w: *Writer, flows: []*Flow, sz: term.Size, session: SessionState, mode_label: []const u8, selected_key: ?cartograph.FlowKey, now_ms: i64) !void {
     const set = session.activeLenses();
 
     var down_total: u64 = 0;
@@ -290,24 +343,68 @@ fn render(w: *Writer, flows: []*Flow, sz: term.Size, session: SessionState, mode
     if (set.contains(.endpoint)) try col(w, "RTT", 7);
     try w.writeAll(term.reset ++ term.clear_to_eol ++ "\r\n");
 
+    // --- the Why panel (the selected flow, narrated) ---------------------------
+    // Rendered into a scratch first so the row budget knows how many lines it needs.
+    var why_buf: [2048]u8 = undefined;
+    var why_text: []const u8 = "";
+    var selected_flow: ?*Flow = null;
+    if (selected_key) |sk| {
+        for (flows) |f| {
+            if (std.meta.eql(f.key, sk)) {
+                selected_flow = f;
+                break;
+            }
+        }
+        var ww = Writer.fixed(&why_buf);
+        if (selected_flow) |f| {
+            cartograph.why.describe(&ww, f, now_ms) catch {};
+        } else {
+            ww.writeAll("that conversation has ended\n") catch {};
+        }
+        why_text = ww.buffered();
+    }
+    const why_lines: usize = if (why_text.len == 0) 0 else std.mem.count(u8, why_text, "\n") + 1; // +1 = headline
+
     // --- rows ----------------------------------------------------------------
     const header_rows = 3;
     const footer_rows = 2;
-    const max_rows: usize = if (sz.rows > header_rows + footer_rows + 1) sz.rows - header_rows - footer_rows else 1;
+    const reserved = header_rows + footer_rows + why_lines;
+    const max_rows: usize = if (sz.rows > reserved + 1) sz.rows - reserved else 1;
     const shown = @min(max_rows, flows.len);
 
     var i: usize = 0;
     while (i < shown) : (i += 1) {
+        const is_sel = if (selected_key) |sk| std.meta.eql(flows[i].key, sk) else false;
+        if (is_sel) try w.writeAll("\x1b[48;5;236m"); // quiet slate highlight behind the cursor row
         try renderRow(w, flows[i], set);
+        if (is_sel) try w.writeAll(term.reset);
         try w.writeAll(term.clear_to_eol ++ "\r\n");
     }
 
     // clear any rows left over from a previous, longer frame
     try w.writeAll("\x1b[0J");
 
+    // --- the Why panel body ----------------------------------------------------
+    if (why_lines > 0 and sz.rows > footer_rows + why_lines + 1) {
+        try w.print("\x1b[{d};1H", .{sz.rows - footer_rows - why_lines + 1});
+        // headline: the focus line — the same cursor the agent's `focus` event carries (D24)
+        var fb: [160]u8 = undefined;
+        try w.print("{s}⌖ {s}{s}", .{ sky, session.focus.describe(&fb), term.reset });
+        if (selected_flow) |f| {
+            try w.writeAll(term.dim ++ "  — " ++ term.reset);
+            try cartograph.why.headline(w, f);
+        }
+        try w.writeAll(term.clear_to_eol ++ "\r\n");
+        var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, why_text, "\n"), '\n');
+        while (lines.next()) |line| {
+            try w.print("{s}{s}{s}", .{ term.dim, line, term.reset });
+            try w.writeAll(term.clear_to_eol ++ "\r\n");
+        }
+    }
+
     // --- footer --------------------------------------------------------------
     try w.print("\x1b[{d};1H{s}", .{ sz.rows, term.dim });
-    try w.writeAll("q quit · p profile · 1-6 lens · ");
+    try w.writeAll("q quit · p profile · 1-6 lens · j/k select · esc orbit · ");
     try legend(w);
     try w.writeAll(term.reset ++ term.clear_to_eol);
 }

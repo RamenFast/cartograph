@@ -13,12 +13,18 @@ pub const PidInfo = struct {
     comm_len: u8 = 0,
     exe: [255]u8 = undefined,
     exe_len: u8 = 0,
+    ppid: u32 = 0, // parent pid — "what launched this?" (the Why panel's lineage line)
+    pcomm: [16]u8 = undefined,
+    pcomm_len: u8 = 0,
 
     pub fn commSlice(self: *const PidInfo) []const u8 {
         return self.comm[0..self.comm_len];
     }
     pub fn exeSlice(self: *const PidInfo) []const u8 {
         return self.exe[0..self.exe_len];
+    }
+    pub fn pcommSlice(self: *const PidInfo) []const u8 {
+        return self.pcomm[0..self.pcomm_len];
     }
 };
 
@@ -57,6 +63,7 @@ pub fn buildInodeMap(io: std.Io, map: *InodeMap) !void {
             if (!resolved) {
                 resolveComm(io, pid, &info, &pathbuf, &commbuf);
                 resolveExe(io, pid, &info, &pathbuf, &linkbuf);
+                resolveParent(io, pid, &info, &pathbuf, &commbuf);
                 resolved = true;
             }
             try map.put(inode, info);
@@ -79,4 +86,25 @@ fn resolveExe(io: std.Io, pid: u32, info: *PidInfo, pathbuf: []u8, linkbuf: []u8
     const elen: u8 = @intCast(@min(n, info.exe.len));
     @memcpy(info.exe[0..elen], linkbuf[0..elen]);
     info.exe_len = elen;
+}
+
+/// Fill ppid + parent comm — the "launched by" the Why panel narrates. `/proc/<pid>/stat`
+/// is "pid (comm) state ppid …"; comm may contain spaces/parens, so parse after the LAST ')'.
+fn resolveParent(io: std.Io, pid: u32, info: *PidInfo, pathbuf: []u8, commbuf: []u8) void {
+    var statbuf: [512]u8 = undefined;
+    const sp = std.fmt.bufPrint(pathbuf, "/proc/{d}/stat", .{pid}) catch return;
+    const stat = std.Io.Dir.cwd().readFile(io, sp, &statbuf) catch return;
+    const close = std.mem.lastIndexOfScalar(u8, stat, ')') orelse return;
+    var fields = std.mem.tokenizeScalar(u8, stat[close + 1 ..], ' ');
+    _ = fields.next(); // state
+    const ppid_str = fields.next() orelse return;
+    info.ppid = std.fmt.parseInt(u32, ppid_str, 10) catch return;
+    if (info.ppid == 0) return;
+
+    const cp = std.fmt.bufPrint(pathbuf, "/proc/{d}/comm", .{info.ppid}) catch return;
+    const c = std.Io.Dir.cwd().readFile(io, cp, commbuf) catch return;
+    const trimmed = std.mem.trimEnd(u8, c, "\n");
+    const clen: u8 = @intCast(@min(trimmed.len, info.pcomm.len));
+    @memcpy(info.pcomm[0..clen], trimmed[0..clen]);
+    info.pcomm_len = clen;
 }

@@ -38,7 +38,9 @@ pub fn flowWireEqual(a: Flow, b: Flow) bool {
         a.asn == b.asn and
         std.mem.eql(u8, a.remote_name.slice(), b.remote_name.slice()) and
         std.mem.eql(u8, a.as_org.slice(), b.as_org.slice()) and
-        std.mem.eql(u8, &a.country, &b.country);
+        std.mem.eql(u8, &a.country, &b.country) and
+        a.ppid == b.ppid and
+        std.mem.eql(u8, a.pcomm.slice(), b.pcomm.slice());
 }
 
 /// Encode a flow as the producer would, then decode it as a consumer would.
@@ -105,6 +107,8 @@ fn randomFlow(rnd: std.Random) Flow {
     f.asn = rnd.int(u32);
     f.as_org = randomStr(64, rnd);
     if (rnd.boolean()) f.country = .{ rnd.intRangeAtMost(u8, 'A', 'Z'), rnd.intRangeAtMost(u8, 'A', 'Z') };
+    f.ppid = rnd.int(u32);
+    f.pcomm = randomStr(16, rnd);
     return f;
 }
 

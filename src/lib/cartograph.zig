@@ -20,6 +20,8 @@ pub const session = @import("session.zig");
 pub const scope = @import("scope.zig");
 pub const focus = @import("focus.zig");
 pub const mmdb = @import("mmdb.zig");
+pub const why = @import("why.zig");
+pub const fmtutil = @import("fmt.zig");
 pub const usock = @import("usock.zig");
 pub const parity = @import("parity.zig");
 
@@ -35,59 +37,14 @@ pub const Observation = table.Observation;
 pub const SessionState = session.SessionState;
 pub const Focus = focus.Focus;
 
-/// Write `addr:port`, bracketing IPv6 the conventional way: `[2a04::1]:443`.
-pub fn writeEndpoint(w: *std.Io.Writer, addr: Addr, port: u16) std.Io.Writer.Error!void {
-    if (addr.is_v6) {
-        try w.writeByte('[');
-        try addr.write(w);
-        try w.print("]:{d}", .{port});
-    } else {
-        try addr.write(w);
-        try w.print(":{d}", .{port});
-    }
-}
-
-/// Format `addr:port` into `buf` and return the slice.
-pub fn endpoint(buf: []u8, addr: Addr, port: u16) []const u8 {
-    var w = std.Io.Writer.fixed(buf);
-    writeEndpoint(&w, addr, port) catch {};
-    return w.buffered();
-}
-
-/// Human-friendly byte formatting (e.g. "1.4 MB"). Writes into `buf`.
-pub fn humanBytes(buf: []u8, n: u64) []const u8 {
-    const units = [_][]const u8{ "B", "KB", "MB", "GB", "TB" };
-    var v: f64 = @floatFromInt(n);
-    var i: usize = 0;
-    while (v >= 1024.0 and i + 1 < units.len) : (i += 1) v /= 1024.0;
-    var w = std.Io.Writer.fixed(buf);
-    if (i == 0) {
-        w.print("{d} {s}", .{ n, units[i] }) catch {};
-    } else {
-        w.print("{d:.1} {s}", .{ v, units[i] }) catch {};
-    }
-    return w.buffered();
-}
-
-/// Throughput formatting (e.g. "1.4 MB/s"). Writes into `buf`.
-pub fn humanRate(buf: []u8, bytes_per_sec: u64) []const u8 {
-    if (bytes_per_sec == 0) return "·";
-    var tmp: [32]u8 = undefined;
-    const b = humanBytes(&tmp, bytes_per_sec);
-    var w = std.Io.Writer.fixed(buf);
-    w.print("{s}/s", .{b}) catch {};
-    return w.buffered();
-}
+// The formatting helpers live in fmt.zig (a leaf, so why.zig can share them);
+// re-exported here so call sites keep reading `cartograph.humanBytes(...)`.
+pub const writeEndpoint = fmtutil.writeEndpoint;
+pub const endpoint = fmtutil.endpoint;
+pub const humanBytes = fmtutil.humanBytes;
+pub const humanRate = fmtutil.humanRate;
 
 test {
     // Pull every submodule's tests into `zig build test`.
     std.testing.refAllDecls(@This());
-}
-
-test "humanBytes" {
-    const t = std.testing;
-    var buf: [32]u8 = undefined;
-    try t.expectEqualStrings("512 B", humanBytes(&buf, 512));
-    try t.expectEqualStrings("1.0 KB", humanBytes(&buf, 1024));
-    try t.expectEqualStrings("1.4 MB", humanBytes(&buf, 1_468_006));
 }

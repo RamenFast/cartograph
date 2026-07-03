@@ -77,6 +77,8 @@ silent one (a parser that breaks tomorrow on today's output is a Ti bug, and we 
 | `uid` | number | owning user id |
 | `comm` | string | process short name (may be empty) |
 | `exe` | string | resolved executable path (may be empty) |
+| `ppid` | number | parent pid — *what launched this*; `0` = unknown |
+| `pcomm` | string | parent process short name (`"steam"`, `"systemd"`); empty = unknown |
 | `local` / `remote` | string | bare address, **no brackets** (v4 dotted, v6 compressed) |
 | `local_port` / `remote_port` | number | port, separate from the address |
 | `remote_name` | string | the remote's hostname (rDNS today; SNI/passive-DNS upgrade it at S3); empty = unknown |

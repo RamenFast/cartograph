@@ -27,7 +27,8 @@ const FlowKey = flow.FlowKey;
 /// Bumped to 3 in V1/S1: `flow_upsert` grew the remote-identity fields (remote_name/
 /// asn/as_org/country), appended as **trailing fields** — a v3 reader decodes their
 /// absence from a v2 frame as the zero values, so this bump is informative too.
-pub const protocol_version: u16 = 3;
+/// Bumped to 4 in V1/S2: ppid + pcomm ("what launched this?") appended the same way.
+pub const protocol_version: u16 = 4;
 
 /// Upper bound on a single encoded frame, so readers can size their buffer.
 pub const max_frame = 1024;
@@ -108,6 +109,10 @@ fn writeFlow(w: *Writer, f: Flow) Writer.Error!void {
     try w.writeByte(f.as_org.len);
     try w.writeAll(f.as_org.slice());
     try w.writeAll(&f.country);
+    // v4 trailing lineage (S2) — same contract
+    try w.writeInt(u32, f.ppid, .little);
+    try w.writeByte(f.pcomm.len);
+    try w.writeAll(f.pcomm.slice());
 }
 
 fn readFlow(r: *Reader) !Flow {
@@ -140,6 +145,13 @@ fn readFlow(r: *Reader) !Flow {
     const org_len = try r.takeByte();
     f.as_org.set(try r.take(org_len));
     f.country = (try r.takeArray(2)).*;
+    // v4 trailing lineage — same additive contract as above
+    f.ppid = r.takeInt(u32, .little) catch |err| switch (err) {
+        error.EndOfStream => return f,
+        else => |e| return e,
+    };
+    const pcomm_len = try r.takeByte();
+    f.pcomm.set(try r.take(pcomm_len));
     return f;
 }
 
@@ -502,6 +514,8 @@ test "flow round-trips through a frame" {
     f.fresh = true;
     f.comm.set("claude");
     f.exe.set("/usr/lib/claude/claude");
+    f.ppid = 4242;
+    f.pcomm.set("zsh");
     f.remote_name.set("api.anthropic.com");
     f.asn = 13335;
     f.as_org.set("CLOUDFLARENET");
@@ -527,6 +541,8 @@ test "flow round-trips through a frame" {
     try t.expectEqual(@as(u32, 13335), g.asn);
     try t.expectEqualStrings("CLOUDFLARENET", g.as_org.slice());
     try t.expectEqualStrings("US", &g.country);
+    try t.expectEqual(@as(u32, 4242), g.ppid);
+    try t.expectEqualStrings("zsh", g.pcomm.slice());
 }
 
 test "a v2 flow frame (no identity tail) decodes with identity at its zero values" {
@@ -547,7 +563,8 @@ test "a v2 flow frame (no identity tail) decodes with identity at its zero value
     var w = Writer.fixed(&buf);
     try sendFlowUpsert(&w, f);
     const wire = w.buffered();
-    const tail_len = 1 + f.remote_name.len + 4 + 1 + f.as_org.len + 2; // name+asn+org+country
+    const tail_len = 1 + f.remote_name.len + 4 + 1 + f.as_org.len + 2 // name+asn+org+country (v3)
+        + 4 + 1 + f.pcomm.len; // ppid+pcomm (v4)
     const v2_len = wire.len - tail_len;
     var v2: [max_frame]u8 = undefined;
     @memcpy(v2[0..v2_len], wire[0..v2_len]);
@@ -561,6 +578,8 @@ test "a v2 flow frame (no identity tail) decodes with identity at its zero value
     try t.expectEqual(@as(u32, 0), g.asn);
     try t.expectEqual(@as(u8, 0), g.as_org.len);
     try t.expectEqual([2]u8{ 0, 0 }, g.country);
+    try t.expectEqual(@as(u32, 0), g.ppid);
+    try t.expectEqual(@as(u8, 0), g.pcomm.len);
 }
 
 test "hello, tick, closed, and clean EOF" {
