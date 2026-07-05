@@ -98,6 +98,72 @@ fn writeFlowFields(w: *Writer, f: *const Flow, lead_comma: bool) Writer.Error!vo
     try w.print("{d}", .{f.last_seen_ms});
 }
 
+/// One-shot `surveyor status`: the box's network posture as a **single JSON object**
+/// (the station convention's one-shot shape, vs snapshot's per-flow NDJSON). The
+/// agent's "what's my machine doing right now?" answer: listener inventory with
+/// exposure/risk badges + summary counts. Same Flow source as every other renderer,
+/// so it can never drift from what the TUI/GUI shows (parity).
+pub fn writeStatus(w: *Writer, flows: []const *Flow, now_ms: i64) Writer.Error!void {
+    var attributed: usize = 0;
+    var established: usize = 0;
+    var listeners: usize = 0;
+    var expo_loop: usize = 0;
+    var expo_net: usize = 0;
+    var expo_inet: usize = 0;
+    for (flows) |f| {
+        if (f.attributed()) attributed += 1;
+        if (f.state == .established) established += 1;
+        switch (f.exposure()) {
+            .none => {},
+            .loopback => expo_loop += 1,
+            .network => expo_net += 1,
+            .internet => expo_inet += 1,
+        }
+    }
+    listeners = expo_loop + expo_net + expo_inet;
+
+    try w.writeAll("{\"status\":\"ok\",\"tool\":\"surveyor\"");
+    try field(w, "proto_version", true);
+    try w.print("{d}", .{ipc.protocol_version});
+    try field(w, "ts_ms", true);
+    try w.print("{d}", .{now_ms});
+    try field(w, "flows", true);
+    try w.print("{{\"total\":{d},\"attributed\":{d},\"established\":{d},\"listeners\":{d}}}", .{ flows.len, attributed, established, listeners });
+    try field(w, "exposure", true);
+    try w.print("{{\"loopback\":{d},\"network\":{d},\"internet\":{d}}}", .{ expo_loop, expo_net, expo_inet });
+    try field(w, "listeners", true);
+    try w.writeByte('[');
+    var first = true;
+    var ab: [64]u8 = undefined;
+    for (flows) |f| {
+        const expo = f.exposure();
+        if (expo == .none) continue;
+        if (!first) try w.writeByte(',');
+        first = false;
+        try w.writeByte('{');
+        try field(w, "proto", false);
+        try str(w, f.key.proto.label());
+        try field(w, "local", true);
+        try str(w, f.key.local.fmt(&ab));
+        try field(w, "port", true);
+        try w.print("{d}", .{f.key.local_port});
+        try field(w, "pid", true);
+        try w.print("{d}", .{f.pid});
+        try field(w, "comm", true);
+        try str(w, f.comm.slice());
+        try field(w, "exe", true);
+        try str(w, f.exe.slice());
+        try field(w, "service", true);
+        try str(w, f.service().label());
+        try field(w, "exposure", true);
+        try str(w, expo.label());
+        try field(w, "badge", true);
+        try str(w, expo.hex());
+        try w.writeByte('}');
+    }
+    try w.writeAll("]}");
+}
+
 // ---- event-stream lines (the text twin of the binary IPC, AGENT-INTERFACE.md) ----
 // `serve --json` emits one of these per line so an agent watches the *same* live
 // view-model the GUI renders — flow upserts, closes, and tick boundaries — instead of
@@ -227,6 +293,7 @@ pub fn writeSchema(w: *Writer) Writer.Error!void {
     try w.print("{{\n  \"tool\": \"cartograph/surveyor\",\n  \"protocol_version\": {d},\n", .{ipc.protocol_version});
     try w.writeAll(
         \\  "surfaces": {
+        \\    "status_json":   "surveyor status            -> ONE JSON object: listener inventory + exposure badges + flow counts (always JSON)",
         \\    "snapshot_json": "surveyor snapshot --json  -> one bare Flow object per line (NDJSON); stable field names",
         \\    "event_stream":  "surveyor serve --json     -> one event object per line; ev in [hello,flow,closed,tick]",
         \\    "binary_ipc":    "surveyor serve            -> length-prefixed binary frames (the GUI/TUI hot path)"

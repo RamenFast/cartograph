@@ -18,6 +18,13 @@ Every surface is a *renderer* over `libcartograph`, so none can drift from the o
 | **NDJSON (stream)** | an agent *watching over time* | one event = one line (`hello`/`flow`/`closed`/`tick`) | ✅ `surveyor serve --json` |
 | **self-description** | a model with zero prior training | the whole contract as one JSON doc | ✅ `surveyor --schema` |
 | **binary IPC** | the GUI/TUI hot path | length-prefixed frames | ✅ `surveyor serve` |
+| **posture (status)** | an agent's situational check | ONE JSON object: listeners + exposure badges + counts | ✅ `surveyor status` |
+
+**`surveyor status`** (the station-convention one-shot, per `NEXUS-FORM-STATION.md`): the
+"what's my machine doing right now?" answer in a single parse — listener inventory with
+process attribution, per-listener `exposure` (`loopback`/`network`/`internet`) and its
+risk-badge `badge` hex, plus flow/exposure summary counts. Always JSON (a summary is data).
+`surveyor status | jq '.listeners[] | select(.exposure != "loopback")'` = the attack surface.
 
 **Rule (the Unix `isatty` move):** pretty when stdout is a terminal; structured when it's a
 pipe. ✅ **Now automatic** — `surveyor snapshot` emits NDJSON the moment stdout isn't a TTY

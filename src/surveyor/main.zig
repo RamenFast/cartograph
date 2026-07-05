@@ -62,6 +62,8 @@ pub fn main(init: std.process.Init) !void {
         } else if (sock_path) |p| try serveSocket(gpa, io, p, want_bpf, geoip_dir) else try serve(gpa, io, want_bpf, geoip_dir);
     } else if (std.mem.eql(u8, cmd, "snapshot")) {
         try snapshot(gpa, io, as_json, want_bpf, geoip_dir);
+    } else if (std.mem.eql(u8, cmd, "status")) {
+        try status(gpa, io, want_bpf, geoip_dir);
     } else if (std.mem.eql(u8, cmd, "--schema") or std.mem.eql(u8, cmd, "schema")) {
         try printSchema(io);
     } else if (std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "help")) {
@@ -168,6 +170,8 @@ fn usage(io: std.Io) !void {
         \\surveyor — cartograph capture core
         \\
         \\usage:
+        \\  surveyor status                 one-shot posture: ONE JSON object — listeners,
+        \\                                  exposure/risk badges, flow counts (always JSON)
         \\  surveyor snapshot [--json]      one-shot attributed flow table
         \\                                  (auto-NDJSON when stdout is a pipe; force with --json)
         \\  surveyor serve                  stream live binary IPC frames to stdout (pipe to a frontend)
@@ -287,6 +291,35 @@ fn snapshot(gpa: std.mem.Allocator, io: std.Io, as_json: bool, want_bpf: bool, g
         }
     }
     try w.print("\n{s}{d}/{d} flows attributed to a local process (rest = other-user / kernel / closing).{s}\n", .{ DIM, attributed, flows.len, RST });
+    try w.flush();
+}
+
+/// `surveyor status` — the box's posture as ONE JSON object (the station convention's
+/// one-shot shape; the Nexus ask). Listener inventory + exposure/risk badges + flow
+/// counts. Always JSON — a summary is data, there is no table twin. No rDNS wait:
+/// listeners are local truth, names don't gate the answer.
+fn status(gpa: std.mem.Allocator, io: std.Io, want_bpf: bool, geoip_dir: ?[]const u8) !void {
+    var src = try openSource(gpa, io, want_bpf);
+    defer src.deinit();
+    var table = cartograph.FlowTable.init(gpa);
+    defer table.deinit();
+    var enricher = capture.enrich.Enricher.init(gpa, io, geoip_dir);
+    defer enricher.deinit();
+
+    var closed: std.ArrayList(cartograph.FlowKey) = .empty;
+    defer closed.deinit(gpa);
+    const now = capture.nowMs(io);
+    try src.tick(&table, now, &closed);
+
+    const flows = try table.snapshot(gpa);
+    defer gpa.free(flows);
+    enricher.decorate(flows, now);
+
+    var buf: [128 * 1024]u8 = undefined;
+    var fw = std.Io.File.stdout().writer(io, &buf);
+    const w = &fw.interface;
+    try cartograph.json.writeStatus(w, flows, now);
+    try w.writeByte('\n');
     try w.flush();
 }
 

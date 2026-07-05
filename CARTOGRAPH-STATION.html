@@ -1,0 +1,134 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>🛰 Cartograph — Station Signpost</title>
+<style>
+:root{
+  --plane:#f3e6e6;--surface:#fcf4f3;--surface-2:#f6e9e9;--ink:#2b2128;--ink-2:#5f4f57;
+  --muted:#9c8890;--line:rgba(43,33,40,.16);--line-strong:rgba(43,33,40,.30);
+  --accent:#c85a7c;--accent-2:#7c9e88;--plum:#7d4a6a;--on-accent:#fff7f9;
+  --stone:#e7dad9;--stone-hi:#fffafa;--stone-lo:#c9b6b8;
+  --mono:"JetBrains Mono","Cascadia Code",ui-monospace,monospace;
+  --prose:Georgia,"Iowan Old Style",serif;
+  --tool:#5b8bd0; /* cartograph's semantic hue: observatory blue — stable across the station */
+}
+:root[data-theme="light"]{--plane:#eaeef2;--surface:#fff;--surface-2:#f5f8fa;--ink:#0e1620;--ink-2:#43515e;--muted:#7a8894;--line:rgba(14,22,32,.12);--line-strong:rgba(14,22,32,.28);--accent:#0c94a2;--accent-2:#4a6b7a;--on-accent:#fff;--stone:#e4e9ee;--stone-hi:#fff;--stone-lo:#c2ccd4}
+:root[data-theme="dark"]{--plane:#0a0810;--surface:#141019;--surface-2:#1b1522;--ink:#f0eaf0;--ink-2:#b3a6b3;--muted:#7d6f7d;--line:rgba(240,234,240,.12);--line-strong:rgba(240,234,240,.26);--accent:#e78aa6;--accent-2:#8fb59c;--on-accent:#160810;--stone:#241d29;--stone-hi:#332838;--stone-lo:#140f18}
+*{box-sizing:border-box;border-radius:0}
+body{margin:0;background:var(--plane);color:var(--ink);font:15px/1.6 var(--prose)}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:920px;margin:0 auto;padding:28px 20px 80px}
+header.post{border:1px solid var(--line-strong);background:var(--surface);padding:18px 22px;margin-bottom:22px;position:relative}
+header.post::before{content:"";position:absolute;left:26px;top:-14px;width:3px;height:14px;background:var(--line-strong)}
+.crumbs{font:11px var(--mono);letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
+.crumbs b{color:var(--ink-2);font-weight:600}
+h1{font:600 26px var(--prose);margin:0 0 4px}
+h1 .glyph{color:var(--tool)}
+.sub{color:var(--ink-2);margin:0;font-size:14px}
+.bar{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap}
+.homelink{font:12px var(--mono);letter-spacing:.06em}
+.stone-toggle{appearance:none;border:1px solid var(--line-strong);background:linear-gradient(160deg,var(--stone-hi),var(--stone) 42%,var(--stone-lo));color:var(--ink);font:600 11px var(--mono);letter-spacing:.08em;padding:8px 12px;cursor:pointer;box-shadow:inset 1px 1px 0 var(--stone-hi),inset -1px -1px 0 var(--stone-lo),inset 0 0 0 2px rgba(0,0,0,.03),0 2px 0 var(--stone-lo),0 3px 6px rgba(0,0,0,.22);transition:box-shadow .08s,transform .08s}
+.stone-toggle:active{transform:translateY(2px);box-shadow:inset 2px 2px 4px var(--stone-lo),inset -1px -1px 2px var(--stone-hi)}
+.stone-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+section{border:1px solid var(--line);background:var(--surface);padding:16px 20px;margin:14px 0}
+section h2{font:600 13px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--tool);margin:0 0 10px;border-bottom:1px solid var(--line);padding-bottom:8px}
+pre{background:var(--surface-2);border:1px solid var(--line);padding:12px 14px;overflow-x:auto;font:12.5px/1.55 var(--mono);margin:10px 0}
+code{font:12.5px var(--mono);background:var(--surface-2);padding:1px 5px;border:1px solid var(--line)}
+pre code{background:none;border:none;padding:0}
+table{border-collapse:collapse;width:100%;font:12.5px var(--mono)}
+th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}
+th{background:var(--surface-2);font-weight:600;letter-spacing:.04em}
+.k{color:var(--accent-2)} .risk-g{color:#4e9e63}.risk-a{color:#c9862a}.risk-r{color:#cf4d4d}
+.wl{color:var(--accent);cursor:pointer;border-bottom:1px dashed var(--accent)}
+.pop{position:fixed;z-index:40;max-width:420px;background:var(--surface);border:1px solid var(--line-strong);box-shadow:0 6px 24px rgba(0,0,0,.25);padding:14px 16px;font:13px/1.55 var(--prose)}
+.pop .x{position:absolute;top:6px;right:9px;cursor:pointer;font:600 12px var(--mono);color:var(--muted)}
+.pop h3{margin:0 18px 6px 0;font:600 13px var(--mono);color:var(--tool)}
+footer{margin-top:26px;color:var(--muted);font:11px var(--mono);letter-spacing:.06em;text-align:center}
+@media(forced-colors:active){*{box-shadow:none!important}}
+</style>
+
+<div class="wrap">
+  <div class="bar">
+    <span class="homelink">⬅ <a href="../../../Nexus/🏮Home.html">🏮 Home</a> · <a href="../NexusFormStationWork/index.html">🗺 Station Map</a></span>
+    <button class="stone-toggle" id="theme" aria-label="cycle theme">◑ THEME</button>
+  </div>
+
+  <header class="post">
+    <div class="crumbs">SymbolOS › Underground › <b>Network Observatory</b></div>
+    <h1><span class="glyph">🛰</span> Cartograph</h1>
+    <p class="sub">A living map of the machine's network, orbit to byte. eBPF hybrid capture, GTK/TUI fronts —
+    and a native <span class="wl" data-pop="conv">station-convention</span> CLI the agents read. V1 shipped.</p>
+  </header>
+
+  <section>
+    <h2>The signpost — what an agent runs</h2>
+    <pre><code># the posture one-liner: ONE JSON object — listeners, exposure badges, counts
+<span class="k">surveyor status</span> | jq
+
+# every flow, one JSON object per line (auto-NDJSON when piped)
+<span class="k">surveyor snapshot --json</span> | jq -c 'select(.pid != 0)'
+
+# the live watch: hello/flow/closed/tick events at 1 Hz
+<span class="k">surveyor serve --json</span> | jq -c 'select(.ev=="flow" and .fresh)'
+
+# the whole machine-readable contract (a model with zero training learns the tool)
+<span class="k">surveyor --schema</span></code></pre>
+    <p>Binary: <code>cartograph/zig-out/bin/surveyor</code>. Pretty tables appear on a TTY; JSON the moment
+    stdout is a pipe — the <span class="wl" data-pop="isatty">isatty move</span>. GUI (<code>cartograph-gtk</code>) and
+    TUI (<code>cartograph</code>) render the same view-model; nothing can drift.</p>
+  </section>
+
+  <section>
+    <h2>surveyor status — the situational check</h2>
+    <p>Nexus's ask, answered: <em>"what's my machine doing right now?"</em> in one parse.</p>
+    <table>
+      <tr><th>field</th><th>meaning</th></tr>
+      <tr><td>flows</td><td>total · attributed · established · listeners</td></tr>
+      <tr><td>exposure</td><td>listener counts by reach — <span class="risk-g">loopback</span> · <span class="risk-a">network</span> · <span class="risk-r">internet</span></td></tr>
+      <tr><td>listeners[]</td><td>proto, local, port, pid, comm, exe, service, exposure, <span class="wl" data-pop="badge">badge</span></td></tr>
+    </table>
+    <pre><code># the attack surface in one line
+surveyor status | jq '.listeners[] | select(.exposure != "loopback")'
+
+# is the LLM server up? is ComfyUI-nothing squatting a port?
+surveyor status | jq '.listeners[] | select(.comm=="llama-server")'</code></pre>
+  </section>
+
+  <section>
+    <h2>Station wiring</h2>
+    <p>Before image generation, the orchestrator checks the card and this page's tool answers who's
+    listening (<code>llama-server :8108</code>, bridge <code>:8109</code>, Hermes gateway). Risk badges are
+    programmatic — anything unexpected talking shows up as a non-loopback listener with a name.</p>
+    <p>Docs of record: <code>docs/AGENT-INTERFACE.md</code> (the contract) · <code>docs/CLI.md</code> (verb grammar,
+    partly roadmap) · man page <code>cartograph(1)</code>.</p>
+  </section>
+
+  <footer>cartograph · form-station node · convention: NexusFormStationWork/CONVENTION.md ☂️</footer>
+</div>
+
+<script>
+(function(){
+  var t=document.getElementById('theme'),order=['','light','dark'],root=document.documentElement;
+  t.onclick=function(){var i=(order.indexOf(root.dataset.theme||'')+1)%3;
+    if(order[i])root.dataset.theme=order[i];else delete root.dataset.theme;};
+  var POPS={
+    conv:{t:'The station convention',b:'Every local tool speaks JSON from a bash-callable CLI: one object for one-shots, NDJSON for streams, errors that name the fix, exit codes 0/2/3/4, strict schemas. Native, not MCP. The normative doc lives in NexusFormStationWork/CONVENTION.md — cartograph was its template.'},
+    isatty:{t:'The isatty move',b:'tcgetattr on stdout: a terminal gets the colored human table, a pipe gets NDJSON — no flag to remember. --json still forces structure when writing to a file. A real Unix program never makes you fight color codes in a pipeline.'},
+    badge:{t:'Risk badges',b:'Each listener carries its exposure as a hex badge color: green #87d787 loopback (only this box), amber #ffaf00 network (your LAN can reach it), red #ff5f5f internet (the world can reach it). Programmatic — an agent can alert on any non-loopback newcomer.'}
+  };
+  var open=[];
+  document.addEventListener('click',function(e){
+    var w=e.target.closest('.wl');
+    if(w){var k=w.dataset.pop,p=POPS[k];if(!p)return;
+      var d=document.createElement('div');d.className='pop';
+      d.innerHTML='<span class="x">✕</span><h3>'+p.t+'</h3>'+p.b;
+      var r=w.getBoundingClientRect();
+      d.style.left=Math.min(r.left,innerWidth-440)+'px';d.style.top=(r.bottom+8)+'px';
+      document.body.appendChild(d);open.push(d);
+      d.querySelector('.x').onclick=function(){d.remove()};
+      e.stopPropagation();return;}
+    if(!e.target.closest('.pop')){open.forEach(function(d){d.remove()});open=[];}
+  });
+  addEventListener('keydown',function(e){if(e.key==='Escape'){open.forEach(function(d){d.remove()});open=[];}});
+})();
+</script>
