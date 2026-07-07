@@ -1,5 +1,11 @@
 const std = @import("std");
 
+/// The one version. Source of truth is build.zig.zon; injected into every module as
+/// `@import("buildinfo")` so `--version` output and the package filename can never
+/// drift apart (the "version is REAL everywhere" law).
+const manifest = @import("build.zig.zon");
+const version: []const u8 = manifest.version;
+
 // Cartograph — M1 build graph.
 //
 //   libcartograph (module "cartograph")  — the frontend-agnostic view-model.
@@ -13,10 +19,16 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // --- buildinfo: the injected version, importable everywhere ----------------
+    const buildinfo = b.addOptions();
+    buildinfo.addOption([]const u8, "version", version);
+    const buildinfo_mod = buildinfo.createModule();
+
     // --- libcartograph: the shared, frontend-agnostic view-model ---------------
     const cartograph = b.addModule("cartograph", .{
         .root_source_file = b.path("src/lib/cartograph.zig"),
         .target = target,
+        .imports = &.{.{ .name = "buildinfo", .module = buildinfo_mod }},
     });
 
     // --- capture: the /proc-based capture core (unprivileged path) -------------
@@ -114,8 +126,8 @@ pub fn build(b: *std.Build) void {
         run_gtk_step.dependOn(&run_gtk.step);
     }
 
-    // --- man page -------------------------------------------------------------
-    b.installFile("man/cartograph.1", "share/man/man1/cartograph.1");
+    // Man pages are scdoc sources (man/*.1.scd); the packaging scripts render and
+    // gzip them (keeps scdoc out of the dev build's dependencies).
 
     // --- `zig build run` → the live TUI (in-process capture) ------------------
     const run_step = b.step("run", "Run the live cartograph TUI");

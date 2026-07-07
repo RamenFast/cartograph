@@ -75,6 +75,7 @@ extern fn g_object_get_data(object: ?*anyopaque, key: [*:0]const u8) ?*anyopaque
 
 extern fn gtk_application_window_new(app: ?*anyopaque) ?*anyopaque;
 extern fn gtk_window_set_title(window: ?*anyopaque, title: [*:0]const u8) void;
+extern fn gtk_window_set_icon_name(window: ?*anyopaque, name: [*:0]const u8) void;
 extern fn gtk_window_set_default_size(window: ?*anyopaque, width: c_int, height: c_int) void;
 extern fn gtk_window_present(window: ?*anyopaque) void;
 extern fn gtk_window_set_child(window: ?*anyopaque, child: ?*anyopaque) void;
@@ -582,6 +583,9 @@ fn onActivate(gapp: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
     const window = gtk_application_window_new(gapp);
     gtk_window_set_title(window, "cartograph — live flows");
     gtk_window_set_default_size(window, 1280, 720);
+    // The desktop icon (hicolor "cartograph", installed by the package). Harmless
+    // no-op when running from a build tree without the icon installed.
+    gtk_window_set_icon_name(window, "cartograph");
 
     // a key controller on the window catches "p" / "1–6" / Escape anywhere
     const keys = gtk_event_controller_key_new();
@@ -636,6 +640,15 @@ fn onActivate(gapp: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
 
 // ---- entry point ------------------------------------------------------------
 
+/// A clean one-line failure: message to stderr, exit 2 — never a stack trace.
+fn fail(io: std.Io, comptime fmt: []const u8, fmt_args: anytype) noreturn {
+    var buf: [512]u8 = undefined;
+    var fw = std.Io.File.stderr().writer(io, &buf);
+    fw.interface.print("cartograph-gtk: " ++ fmt ++ "\n", fmt_args) catch {};
+    fw.interface.flush() catch {};
+    std.process.exit(2);
+}
+
 fn connectWithRetry(io: std.Io, path: []const u8) !std.posix.fd_t {
     // surveyor may still be binding its socket when we launch; give it a moment.
     var attempt: usize = 0;
@@ -667,12 +680,40 @@ pub fn main(init: std.process.Init) !void {
     var args = std.process.Args.Iterator.init(init.minimal.args);
     _ = args.next();
     while (args.next()) |a| {
-        if (std.mem.eql(u8, a, "--socket")) sock_path = args.next();
+        if (std.mem.eql(u8, a, "--socket")) {
+            sock_path = args.next() orelse return fail(io, "--socket needs a path", .{});
+        } else if (std.mem.eql(u8, a, "--version") or std.mem.eql(u8, a, "-V")) {
+            var buf: [64]u8 = undefined;
+            var fw = std.Io.File.stdout().writer(io, &buf);
+            try fw.interface.print("cartograph-gtk {s}\n", .{cartograph.version});
+            try fw.interface.flush();
+            return;
+        } else if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
+            var buf: [1024]u8 = undefined;
+            var fw = std.Io.File.stdout().writer(io, &buf);
+            try fw.interface.writeAll(
+                \\cartograph-gtk — live attributed-flow window (the GTK expression)
+                \\
+                \\usage:
+                \\  surveyor serve | cartograph-gtk         frames on stdin (the pipe)
+                \\  cartograph-gtk --socket <path>          connect to `surveyor serve --socket <path>`
+                \\                                          (full-duplex: toggles go upstream)
+                \\  cartograph-gtk --version | --help
+                \\
+                \\keys:  p profile · 1-6 lenses · ↑/↓ select (the Why panel narrates the selection)
+                \\
+            );
+            try fw.interface.flush();
+            return;
+        } else {
+            return fail(io, "unknown flag '{s}' — see `cartograph-gtk --help`", .{a});
+        }
     }
 
     // The IPC source: a connected Unix socket (the daemon boundary) or stdin (the pipe).
     const fd: std.posix.fd_t = if (sock_path) |p|
-        try connectWithRetry(io, p)
+        connectWithRetry(io, p) catch
+            fail(io, "no surveyor socket at '{s}' — start one with: surveyor serve --socket {s}", .{ p, p })
     else
         std.Io.File.stdin().handle;
     defer if (sock_path != null) cartograph.usock.close(fd);

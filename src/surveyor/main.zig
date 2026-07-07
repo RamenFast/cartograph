@@ -31,6 +31,8 @@ pub fn main(init: std.process.Init) !void {
     const cmd = args.next() orelse "snapshot";
 
     // Simple, agent-legible flag scan (order-independent). See docs/AGENT-INTERFACE.md.
+    // Unknown flags are an error, not a shrug — a typo'd `--sockte` must never silently
+    // run something else (consistent-behavior law).
     var as_json = false;
     var want_bpf = false;
     var sock_path: ?[]const u8 = null;
@@ -41,9 +43,11 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, a, "--bpf")) {
             want_bpf = true;
         } else if (std.mem.eql(u8, a, "--socket")) {
-            sock_path = args.next();
+            sock_path = args.next() orelse return fail(io, "--socket needs a path", .{});
         } else if (std.mem.eql(u8, a, "--geoip")) {
-            geoip_dir = args.next();
+            geoip_dir = args.next() orelse return fail(io, "--geoip needs a directory", .{});
+        } else {
+            return fail(io, "unknown flag '{s}' — see `surveyor --help`", .{a});
         }
     }
 
@@ -66,12 +70,33 @@ pub fn main(init: std.process.Init) !void {
         try status(gpa, io, want_bpf, geoip_dir);
     } else if (std.mem.eql(u8, cmd, "--schema") or std.mem.eql(u8, cmd, "schema")) {
         try printSchema(io);
-    } else if (std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "help")) {
-        try usage(io);
+    } else if (std.mem.eql(u8, cmd, "--version") or std.mem.eql(u8, cmd, "version") or std.mem.eql(u8, cmd, "-V")) {
+        try printVersion(io);
+    } else if (std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "-h")) {
+        try usage(io, .stdout); // help was *asked for* → it's the output, not a complaint
     } else {
-        try usage(io);
-        return error.UnknownCommand;
+        try usage(io, .stderr);
+        return fail(io, "unknown command '{s}'", .{cmd});
     }
+}
+
+/// `surveyor --version` — the injected build.zig.zon version, nothing else on the line
+/// (scripts parse this; the packaging gate compares it to the package filename).
+fn printVersion(io: std.Io) !void {
+    var buf: [64]u8 = undefined;
+    var fw = std.Io.File.stdout().writer(io, &buf);
+    try fw.interface.print("surveyor {s}\n", .{cartograph.version});
+    try fw.interface.flush();
+}
+
+/// A clean one-line failure: message to stderr, exit 2 — never a stack trace. A CLI's
+/// error surface is part of its UI (the polished-consistent-behavior pass).
+fn fail(io: std.Io, comptime fmt: []const u8, fmt_args: anytype) noreturn {
+    var buf: [512]u8 = undefined;
+    var fw = std.Io.File.stderr().writer(io, &buf);
+    fw.interface.print("surveyor: " ++ fmt ++ "\n", fmt_args) catch {};
+    fw.interface.flush() catch {};
+    std.process.exit(2);
 }
 
 /// The capture source behind the Observation seam: unprivileged inet_diag, or the
@@ -162,9 +187,13 @@ fn warnBpfFallback(io: std.Io, err: anyerror) void {
     w.flush() catch {};
 }
 
-fn usage(io: std.Io) !void {
-    var buf: [512]u8 = undefined;
-    var fw = std.Io.File.stderr().writer(io, &buf);
+fn usage(io: std.Io, sink: enum { stdout, stderr }) !void {
+    var buf: [1024]u8 = undefined;
+    const file = switch (sink) {
+        .stdout => std.Io.File.stdout(),
+        .stderr => std.Io.File.stderr(),
+    };
+    var fw = file.writer(io, &buf);
     const w = &fw.interface;
     try w.writeAll(
         \\surveyor — cartograph capture core
@@ -179,6 +208,7 @@ fn usage(io: std.Io) !void {
         \\                                  (hello/flow/closed/tick lines — the agent's live watch)
         \\  surveyor serve --socket <path>  serve frames over a Unix socket (the daemon boundary)
         \\  surveyor --schema               print the machine-readable contract of every surface
+        \\  surveyor --version              print the version and exit
         \\
         \\flags: --bpf (use the eBPF source if caps allow)  --socket <path>  --json
         \\       --geoip <dir> (ASN+country mmdb dir; default ~/.local/share/cartograph/geoip —
