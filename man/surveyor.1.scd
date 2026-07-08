@@ -35,8 +35,8 @@ passive-DNS true hostnames from the box's own :53 answers.
 
 *serve --socket* _path_
 	Serve frames over a Unix socket — the daemon privilege boundary. Frontends
-	(*cartograph*, *cartograph-gtk*, *planisphere*) connect unprivileged; the
-	socket is full-duplex (session/lens/focus changes travel upstream).
+	(*cartograph*, *cartograph-gtk*) connect unprivileged; the socket is
+	full-duplex (session/lens/focus changes travel upstream).
 
 *serve --json* [*--socket* _path_]
 	The same live view-model as NDJSON events (hello/flow/closed/tick lines) —

@@ -6,6 +6,6 @@ Comment=A living map of your machine's network — every process and who it is t
 Exec=cartograph-gtk
 Icon=cartograph
 Terminal=false
-Categories=System;Monitor;Network;
+Categories=System;Monitor;
 Keywords=network;flows;connections;monitor;firewall;map;traffic;who;
 StartupWMClass=cartograph-gtk

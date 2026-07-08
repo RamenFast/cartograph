@@ -75,6 +75,7 @@ echo "  optional GeoIP identity:  cartograph-fetch-geoip"
 %license /usr/share/doc/cartograph/copyright
 %{_mandir}/man1/cartograph.1.gz
 %{_mandir}/man1/surveyor.1.gz
+%{_mandir}/man1/cartograph-gtk.1.gz
 EOF
 
 rpmbuild -bb "$WORK/cartograph.spec" \

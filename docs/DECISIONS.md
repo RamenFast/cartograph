@@ -59,10 +59,13 @@ user. Limits blast radius and keeps the GUI unprivileged.
 The "Why / explain this flow" feature uses the on-box `ollama` model by default → offline,
 private, no traffic leak. A cloud model (e.g. Claude API) is strictly opt-in later.
 
-## D8 — Names (working): product **Cartograph**; components **surveyor** + **atlas**
+## D8 — Names (RATIFIED 2026-07-07): product **Cartograph**; components **surveyor** + **atlas**
 Cartography theme encodes the hero UX (a living, zoomable map). Components are
-self-describing (surveyor measures the terrain = captures; atlas is the map). All
-provisional — rename freely.
+self-describing (surveyor measures the terrain = captures; atlas is the map).
+Held as a working title through V1; **Ben ratified "Cartograph" for the v1.0.0
+release** ("D8 Cartograph is good", 2026-07-07) — the name is now load-bearing:
+package, binaries, desktop entry, man pages, repo. `graphscope` (floated
+2026-06-17) stays the road not taken.
 
 ## D9 — Frontends: dual native (Terminal + GTK) over one Zig view-model
 You want a terminal expression AND a GTK expression with identical capability. All logic

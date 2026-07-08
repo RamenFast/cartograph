@@ -74,7 +74,7 @@ stage_tree() {
     done
 
     # man pages (scdoc → gz, reproducible timestamps)
-    for page in cartograph surveyor; do
+    for page in cartograph surveyor cartograph-gtk; do
         scdoc < "$PROJECT_DIR/man/${page}.1.scd" | gzip -9n > "$dest/usr/share/man/man1/${page}.1.gz"
     done
 
