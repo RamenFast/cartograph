@@ -1,8 +1,38 @@
 # Cartograph — next session (start here)
 
-> Updated 2026-07-03 (**V1 shipped**). New here? Read [docs/V1.md](V1.md) (the scope call + the
-> S1→S4 build log), then [docs/README.md](README.md) (index + status map). Everything builds +
+> Updated 2026-07-08 (**v1.0.0 RELEASED**). New here? Read [docs/V1.md](V1.md) (the scope call +
+> the S1→S4 build log), then [docs/README.md](README.md) (index + status map). Everything builds +
 > tests green: **`zig build test` = 73, `-Dbpf=true` = 78.**
+
+## 🚢 v1.0.0 SHIPPED (2026-07-08) — the crystallize wave
+
+**The release is real:** <https://github.com/RamenFast/cartograph/releases/tag/v1.0.0> —
+deb + rpm (identical payloads by construction, `packaging/stage.sh`) + source tarball +
+SHA256SUMS, notes from `packaging/RELEASE-NOTES-v1.0.0.md`, hero from the exact released
+bits (endpoint-reviewed under STATE.md §5). Installed and verified on this box: all three
+`--version`s answer 1.0.0, man pages render, the desktop entry validates, the icon caches
+are fresh, eBPF caps granted and attach verified (stderr clean, no fallback).
+
+The wave itself (branch merged `--no-ff`, then deleted — one-branch law):
+- **The double-click path actually opens** — menu launchers hand apps `/dev/null`, which is
+  no tty *and* no pipe; detection is now fstat-based (FIFO/socket/regular file = frames on
+  stdin; anything else spawns a private `surveyor serve` that dies with the window).
+- **The GTK app wears the house Blossom Dark** (ben-ui-design; canon = phosphor theme.rs):
+  sharp corners, hairline frames, headerbar brand + carved stone profile button + lens
+  toggle rail (buttons and keys drive the same D22 session), engraved Why plate, gold
+  headline numbers, rose shared cursor. Category/exposure data hues unchanged (D14).
+- **The icon came home**: same constellation concept, re-grounded in the app's own palette;
+  flows are great-circle arcs; the machine is the ringed rose home star. Guard-band 0,
+  RGBA all sizes, verified at 256/64/32/16.
+- **Layout hardened**: header + rows ellipsize; the list never h-scrolls; the full lens
+  column set fits the default pane (the v6-street-focus pane-shove bug is dead).
+- **D8 RATIFIED** — the name is Cartograph. README rewritten compact + evergreen (~120
+  lines, agent-legible, every command run verbatim). Governance founded: docs/ASKS.md +
+  docs/SERIOUS-TODOS.md (read the latter before trusting anything shaky).
+
+**Post-ship state on this box:** the package is installed system-wide; `/usr/bin/surveyor`
+holds `cap_bpf,cap_perfmon,cap_net_admin,cap_net_raw+ep` (the deliberate opt-in, performed
+and reported 2026-07-08).
 
 ## ⭐ V1 IS DONE (2026-07-03) — the one loop, shipped
 
