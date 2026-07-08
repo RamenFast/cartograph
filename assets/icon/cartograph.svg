@@ -1,16 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  cartograph — the app icon: the constellation map in miniature.
+  cartograph — the app icon: the constellation map in miniature, v1.0.0.
 
-  The machine is the bright center; remote endpoints are stars in the fixed
-  category colours of the design language (identity.zig Category.hex()):
-  web #5fafff · dns #af87ff · ssh #ff8700 · lan #87d787 · internet #5fd7ff ·
-  listen #ff5f5f. Edges are flows: a blurred halo under a bright core, the
-  phosphor two-layer stroke. Faint graticule rings mark the zoom altitudes
-  (orbit / region / street); compass ticks say "this is a map".
+  The machine is the rose home star (the house accent — the one bold hue);
+  remote endpoints are stars in the fixed category colours of the design
+  language (identity.zig Category.hex()): web #5fafff · dns #af87ff ·
+  ssh #ff8700 · internet #5fd7ff · lan #87d787 · listen #ff5f5f. Flows are
+  great-circle arcs — routes on a map, not spokes on a wheel — each a blurred
+  halo under a bright core (the phosphor two-layer stroke). Faint graticule
+  rings mark the zoom altitudes (orbit / region / street); the north tick is
+  rose: the map is oriented, and north is home's colour.
 
-  House rules honoured: sharp corners, hairline frame, deep CRT ground,
-  nothing decorative that isn't also data.
+  Ground and hairlines are the app's own chrome (Blossom Dark: plane #1c1016,
+  stone #3b2631/#553948) so the icon and the window are one thing. House rules:
+  sharp corners, hairline frame, nothing decorative that isn't also data.
 -->
 <svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
   <defs>
@@ -25,11 +28,11 @@
     </filter>
   </defs>
 
-  <!-- ground: deep CRT black-green -->
-  <rect x="0" y="0" width="256" height="256" fill="#050807"/>
+  <!-- ground: the app's own plane (Blossom Dark wine-plum) -->
+  <rect x="0" y="0" width="256" height="256" fill="#1c1016"/>
 
-  <!-- faint constellation background stars (structure, not noise: they sit between rings) -->
-  <g fill="#8fb3a3" opacity="0.20">
+  <!-- faint background stars (structure, not noise: they sit between rings) -->
+  <g fill="#c9b0bc" opacity="0.18">
     <circle cx="40"  cy="70"  r="1.1"/>
     <circle cx="216" cy="44"  r="1.0"/>
     <circle cx="232" cy="196" r="1.1"/>
@@ -40,82 +43,77 @@
     <circle cx="118" cy="226" r="0.9"/>
   </g>
 
-  <!-- graticule: the three altitudes, orbit → region → street -->
-  <g fill="none" stroke="#2a3a32" stroke-width="1">
-    <circle cx="128" cy="128" r="118" opacity="0.85"/>
-    <circle cx="128" cy="128" r="82"  opacity="0.55"/>
-    <circle cx="128" cy="128" r="46"  opacity="0.45"/>
+  <!-- graticule: the three altitudes, orbit → region → street (stone hairlines) -->
+  <g fill="none" stroke="#3b2631" stroke-width="1">
+    <circle cx="128" cy="132" r="110" opacity="0.9"/>
+    <circle cx="128" cy="132" r="78"  opacity="0.6"/>
+    <circle cx="128" cy="132" r="44"  opacity="0.5"/>
   </g>
 
-  <!-- compass ticks on the orbit ring: a map, oriented -->
-  <g stroke="#3d5346" stroke-width="2">
-    <line x1="128" y1="4"   x2="128" y2="16"/>
-    <line x1="128" y1="240" x2="128" y2="252"/>
-    <line x1="4"   y1="128" x2="16"  y2="128"/>
-    <line x1="240" y1="128" x2="252" y2="128"/>
-  </g>
-  <g stroke="#2a3a32" stroke-width="1.5">
-    <line x1="215.5" y1="40.5"  x2="207" y2="49"/>
-    <line x1="215.5" y1="215.5" x2="207" y2="207"/>
-    <line x1="40.5"  y1="215.5" x2="49"  y2="207"/>
-    <line x1="40.5"  y1="40.5"  x2="49"  y2="49"/>
+  <!-- compass ticks: a map, oriented — and north is home's colour -->
+  <line x1="128" y1="14"  x2="128" y2="26"  stroke="#ec8fac" stroke-width="2"/>
+  <g stroke="#553948" stroke-width="2">
+    <line x1="128" y1="230" x2="128" y2="242"/>
+    <line x1="14"  y1="132" x2="26"  y2="132"/>
+    <line x1="230" y1="132" x2="242" y2="132"/>
   </g>
 
-  <!-- ═══ flows: halo pass (blurred, saturated) ═══ -->
+  <!-- ═══ flows: great-circle arcs, halo pass (blurred, saturated) ═══ -->
   <g fill="none" stroke-linecap="round" filter="url(#halo)">
-    <line x1="128" y1="128" x2="187" y2="79"  stroke="#5fafff" stroke-width="4.5" opacity="0.85"/>
-    <line x1="128" y1="128" x2="66"  y2="108" stroke="#af87ff" stroke-width="3"   opacity="0.8"/>
-    <line x1="128" y1="128" x2="88"  y2="193" stroke="#ff8700" stroke-width="3.5" opacity="0.8"/>
-    <line x1="128" y1="128" x2="101" y2="57"  stroke="#5fd7ff" stroke-width="2.5" opacity="0.75"/>
-    <line x1="128" y1="128" x2="205" y2="149" stroke="#87d787" stroke-width="3"   opacity="0.8"/>
-    <line x1="128" y1="128" x2="171" y2="207" stroke="#ff5f5f" stroke-width="2.5" opacity="0.75"/>
+    <path d="M 128 132 Q 172 92  190 74"  stroke="#5fafff" stroke-width="4.5" opacity="0.85"/>
+    <path d="M 128 132 Q 92  128 62  104" stroke="#af87ff" stroke-width="3"   opacity="0.8"/>
+    <path d="M 128 132 Q 98  164 86  196" stroke="#ff8700" stroke-width="3.5" opacity="0.8"/>
+    <path d="M 128 132 Q 106 92  104 52"  stroke="#5fd7ff" stroke-width="2.5" opacity="0.75"/>
+    <path d="M 128 132 Q 170 132 206 152" stroke="#87d787" stroke-width="3"   opacity="0.8"/>
+    <path d="M 128 132 Q 158 172 172 210" stroke="#ff5f5f" stroke-width="2.5" opacity="0.75"/>
   </g>
 
   <!-- ═══ flows: core pass (bright, thin) ═══ -->
   <g fill="none" stroke-linecap="round" filter="url(#core)">
-    <line x1="128" y1="128" x2="187" y2="79"  stroke="#b8dcff" stroke-width="2"/>
-    <line x1="128" y1="128" x2="66"  y2="108" stroke="#d9c6ff" stroke-width="1.4"/>
-    <line x1="128" y1="128" x2="88"  y2="193" stroke="#ffc98a" stroke-width="1.6"/>
-    <line x1="128" y1="128" x2="101" y2="57"  stroke="#c8f2ff" stroke-width="1.2"/>
-    <line x1="128" y1="128" x2="205" y2="149" stroke="#ccf2cc" stroke-width="1.4"/>
-    <line x1="128" y1="128" x2="171" y2="207" stroke="#ffc0c0" stroke-width="1.2"/>
+    <path d="M 128 132 Q 172 92  190 74"  stroke="#b8dcff" stroke-width="2"/>
+    <path d="M 128 132 Q 92  128 62  104" stroke="#d9c6ff" stroke-width="1.4"/>
+    <path d="M 128 132 Q 98  164 86  196" stroke="#ffc98a" stroke-width="1.6"/>
+    <path d="M 128 132 Q 106 92  104 52"  stroke="#c8f2ff" stroke-width="1.2"/>
+    <path d="M 128 132 Q 170 132 206 152" stroke="#ccf2cc" stroke-width="1.4"/>
+    <path d="M 128 132 Q 158 172 172 210" stroke="#ffc0c0" stroke-width="1.2"/>
   </g>
 
-  <!-- traffic particles on the busiest flow (web): motion, frozen -->
+  <!-- traffic particles on the busiest route (web): motion, frozen -->
   <g fill="#dcefff">
-    <circle cx="150" cy="110" r="2.2"/>
-    <circle cx="167" cy="96"  r="1.8"/>
+    <circle cx="152" cy="112" r="2.2"/>
+    <circle cx="172" cy="92"  r="1.8"/>
   </g>
   <g fill="#ffd9a6">
-    <circle cx="113" cy="152" r="1.8"/>
+    <circle cx="108" cy="158" r="1.8"/>
   </g>
 
   <!-- ═══ endpoint stars: halo then core ═══ -->
   <g filter="url(#halo)">
-    <circle cx="187" cy="79"  r="9"   fill="#5fafff" opacity="0.9"/>
-    <circle cx="66"  cy="108" r="6"   fill="#af87ff" opacity="0.85"/>
-    <circle cx="88"  cy="193" r="7"   fill="#ff8700" opacity="0.85"/>
-    <circle cx="101" cy="57"  r="5"   fill="#5fd7ff" opacity="0.8"/>
-    <circle cx="205" cy="149" r="6"   fill="#87d787" opacity="0.85"/>
-    <circle cx="171" cy="207" r="5"   fill="#ff5f5f" opacity="0.8"/>
+    <circle cx="190" cy="74"  r="9"   fill="#5fafff" opacity="0.9"/>
+    <circle cx="62"  cy="104" r="6"   fill="#af87ff" opacity="0.85"/>
+    <circle cx="86"  cy="196" r="7"   fill="#ff8700" opacity="0.85"/>
+    <circle cx="104" cy="52"  r="5"   fill="#5fd7ff" opacity="0.8"/>
+    <circle cx="206" cy="152" r="6"   fill="#87d787" opacity="0.85"/>
+    <circle cx="172" cy="210" r="5"   fill="#ff5f5f" opacity="0.8"/>
   </g>
   <g filter="url(#core)">
-    <circle cx="187" cy="79"  r="5.5" fill="#dcefff"/>
-    <circle cx="66"  cy="108" r="3.6" fill="#efe6ff"/>
-    <circle cx="88"  cy="193" r="4.2" fill="#ffe8c8"/>
-    <circle cx="101" cy="57"  r="3"   fill="#e6f9ff"/>
-    <circle cx="205" cy="149" r="3.6" fill="#e8ffe8"/>
-    <circle cx="171" cy="207" r="3"   fill="#ffe2e2"/>
+    <circle cx="190" cy="74"  r="5.5" fill="#dcefff"/>
+    <circle cx="62"  cy="104" r="3.6" fill="#efe6ff"/>
+    <circle cx="86"  cy="196" r="4.2" fill="#ffe8c8"/>
+    <circle cx="104" cy="52"  r="3"   fill="#e6f9ff"/>
+    <circle cx="206" cy="152" r="3.6" fill="#e8ffe8"/>
+    <circle cx="172" cy="210" r="3"   fill="#ffe2e2"/>
   </g>
   <!-- the listener wears its exposure ring (risk, decomposed) -->
-  <circle cx="171" cy="207" r="8.5" fill="none" stroke="#ff5f5f" stroke-width="1.3" opacity="0.85"/>
+  <circle cx="172" cy="210" r="8.5" fill="none" stroke="#ff5f5f" stroke-width="1.3" opacity="0.85"/>
 
-  <!-- ═══ the machine: bright warm center, the home star ═══ -->
-  <circle cx="128" cy="128" r="15" fill="#f5eaef" opacity="0.55" filter="url(#bighalo)"/>
-  <circle cx="128" cy="128" r="9.5" fill="#f5eaef" filter="url(#halo)" opacity="0.9"/>
-  <circle cx="128" cy="128" r="7"   fill="#fffdf8" filter="url(#core)"/>
-  <circle cx="128" cy="128" r="2.6" fill="#5c4450"/>
+  <!-- ═══ the machine: the rose home star, ringed — you are here ═══ -->
+  <circle cx="128" cy="132" r="16" fill="#ec8fac" opacity="0.5" filter="url(#bighalo)"/>
+  <circle cx="128" cy="132" r="10" fill="#ec8fac" filter="url(#halo)" opacity="0.9"/>
+  <circle cx="128" cy="132" r="7"  fill="#ffd9e4" filter="url(#core)"/>
+  <circle cx="128" cy="132" r="2.6" fill="#3b1d2a"/>
+  <circle cx="128" cy="132" r="14" fill="none" stroke="#ec8fac" stroke-width="1.2" opacity="0.75"/>
 
-  <!-- hairline frame, sharp corners -->
-  <rect x="0.5" y="0.5" width="255" height="255" fill="none" stroke="#2a3a32" stroke-width="1"/>
+  <!-- hairline frame, sharp corners (stone) -->
+  <rect x="0.5" y="0.5" width="255" height="255" fill="none" stroke="#3b2631" stroke-width="1"/>
 </svg>
