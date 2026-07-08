@@ -84,6 +84,10 @@ extern fn gtk_window_set_child(window: ?*anyopaque, child: ?*anyopaque) void;
 
 extern fn gtk_scrolled_window_new() ?*anyopaque;
 extern fn gtk_scrolled_window_set_child(sw: ?*anyopaque, child: ?*anyopaque) void;
+// GtkPolicyType
+const GTK_POLICY_AUTOMATIC: c_uint = 1;
+const GTK_POLICY_NEVER: c_uint = 2;
+extern fn gtk_scrolled_window_set_policy(sw: ?*anyopaque, hscrollbar_policy: c_uint, vscrollbar_policy: c_uint) void;
 
 extern fn gtk_paned_new(orientation: c_uint) ?*anyopaque;
 extern fn gtk_paned_set_start_child(paned: ?*anyopaque, child: ?*anyopaque) void;
@@ -108,6 +112,8 @@ extern fn gtk_image_set_pixel_size(image: ?*anyopaque, pixel_size: c_int) void;
 
 extern fn gtk_label_new(str: ?[*:0]const u8) ?*anyopaque;
 extern fn gtk_label_set_markup(label: ?*anyopaque, markup: [*:0]const u8) void;
+const PANGO_ELLIPSIZE_END: c_uint = 3;
+extern fn gtk_label_set_ellipsize(label: ?*anyopaque, mode: c_uint) void;
 extern fn gtk_label_set_xalign(label: ?*anyopaque, xalign: f32) void;
 extern fn gtk_label_set_yalign(label: ?*anyopaque, yalign: f32) void;
 extern fn gtk_label_set_selectable(label: ?*anyopaque, setting: c_int) void;
@@ -364,6 +370,9 @@ const App = struct {
                 gtk_image_set_pixel_size(image, 18);
                 const label = gtk_label_new(null);
                 gtk_label_set_xalign(label, 0);
+                // rows clip gracefully at the pane edge (the list never h-scrolls —
+                // GTK's scroll-to-focused-row would shove the whole view sideways)
+                gtk_label_set_ellipsize(label, PANGO_ELLIPSIZE_END);
                 const hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
                 gtk_widget_set_margin_start(hbox, 6);
                 gtk_box_append(hbox, image);
@@ -472,11 +481,12 @@ fn writeHeaderMarkup(w: *Writer, flows: []*Flow, session: SessionState) Writer.E
     try esc(w, session.focus.describe(&fb));
     try w.writeAll("</span>\n\n");
 
-    // column names, mirroring the row layout below
+    // column names, mirroring the row layout below (widths sized so the full
+    // lens set fits the default pane — no h-scroll, rows ellipsize past the edge)
     try w.print("<span foreground=\"{s}\">  ", .{muted});
     try col(w, "APP", 15);
-    try col(w, "ENDPOINT", 32);
-    if (set.contains(.endpoint)) try col(w, "WHO", 24);
+    try col(w, "ENDPOINT", 30);
+    if (set.contains(.endpoint)) try col(w, "WHO", 21);
     if (set.contains(.volume)) {
         try col(w, "RATE", 12);
         try col(w, "TOTAL", 10);
@@ -506,16 +516,16 @@ fn writeRowMarkup(w: *Writer, f: *Flow, set: lens.Set) Writer.Error!void {
     const ep = if (f.remote_name.len > 0) blk: {
         var ew = Writer.fixed(&ebuf);
         const name = f.remote_name.slice();
-        ew.writeAll(name[0..@min(name.len, 25)]) catch {};
+        ew.writeAll(name[0..@min(name.len, 23)]) catch {};
         ew.print(":{d}", .{f.key.remote_port}) catch {};
         break :blk ew.buffered();
     } else cartograph.endpoint(&ebuf, f.key.remote, f.key.remote_port);
-    try span(w, cat.hex(), ep, 32);
+    try span(w, cat.hex(), ep, 30);
 
     if (set.contains(.endpoint)) {
         var wbuf: [48]u8 = undefined;
         const who = f.whoDisplay(&wbuf);
-        try span(w, muted, who[0..@min(who.len, 23)], 24);
+        try span(w, muted, who[0..@min(who.len, 20)], 21);
     }
 
     if (set.contains(.volume)) {
@@ -768,6 +778,10 @@ fn onActivate(gapp: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
     // left: header + the live flow list
     const header = gtk_label_new(null);
     gtk_label_set_xalign(header, 0);
+    // ellipsize: a street focus on a full v6 pair is longer than any sane pane —
+    // without this the label's natural width shoves the paned off the window.
+    // The complete string always lives in the Why panel; the header is status.
+    gtk_label_set_ellipsize(header, PANGO_ELLIPSIZE_END);
     gtk_widget_set_margin_start(header, 10);
     gtk_widget_set_margin_top(header, 8);
     gtk_widget_add_css_class(header, "cg-chrome");
@@ -781,6 +795,7 @@ fn onActivate(gapp: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
 
     const scroller = gtk_scrolled_window_new();
     gtk_scrolled_window_set_child(scroller, listbox);
+    gtk_scrolled_window_set_policy(scroller, GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_widget_set_vexpand(scroller, 1);
 
     const left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
@@ -808,7 +823,7 @@ fn onActivate(gapp: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
     const paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_paned_set_start_child(paned, left);
     gtk_paned_set_end_child(paned, why_scroller);
-    gtk_paned_set_position(paned, 780);
+    gtk_paned_set_position(paned, 825);
     gtk_window_set_child(window, paned);
 
     app.redraw(); // draw the (possibly empty) table immediately

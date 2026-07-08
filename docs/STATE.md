@@ -60,6 +60,12 @@ Cartograph watches your privacy; it must not become the thing that leaks.
    own `Greeting.label`. **Never** raw flow bytes, DNS history, or packets. (Critique §4 Seam
    B. Two surfaces, two contracts: the *live "explain this flow"* verb is the local model's
    voice; the *postcard template* is the user's voice — don't conflate them.)
+5. **Our own screenshots obey the same contract.** A live capture shows real endpoints, so
+   ambient screenshots stay out of the repo. A published shot (the README hero, release
+   collateral) is captured *deliberately* and **endpoint-reviewed row by row** before commit —
+   only generic infrastructure (CDNs, well-known services, loopback, RFC1918 locals) may be
+   visible. If a row wouldn't belong in a stranger's hands, re-shoot. (Applied to the v1.0.0
+   hero, 2026-07-07.)
 
 ## The unattributed (`?`) flow is a privacy case, not a feature gap
 
