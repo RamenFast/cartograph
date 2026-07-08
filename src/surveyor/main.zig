@@ -212,7 +212,7 @@ fn usage(io: std.Io, sink: enum { stdout, stderr }) !void {
         \\
         \\flags: --bpf (use the eBPF source if caps allow)  --socket <path>  --json
         \\       --geoip <dir> (ASN+country mmdb dir; default ~/.local/share/cartograph/geoip —
-        \\                      populate it once with scripts/fetch-geoip.sh)
+        \\                      populate it once with cartograph-fetch-geoip)
         \\
     );
     try w.flush();
