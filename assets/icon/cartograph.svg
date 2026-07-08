@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  cartograph — the app icon: the constellation map in miniature, v1.0.0.
+
+  The machine is the rose home star (the house accent — the one bold hue);
+  remote endpoints are stars in the fixed category colours of the design
+  language (identity.zig Category.hex()): web #5fafff · dns #af87ff ·
+  ssh #ff8700 · internet #5fd7ff · lan #87d787 · listen #ff5f5f. Flows are
+  great-circle arcs — routes on a map, not spokes on a wheel — each a blurred
+  halo under a bright core (the phosphor two-layer stroke). Faint graticule
+  rings mark the zoom altitudes (orbit / region / street); the north tick is
+  rose: the map is oriented, and north is home's colour.
+
+  Ground and hairlines are the app's own chrome (Blossom Dark: plane #1c1016,
+  stone #3b2631/#553948) so the icon and the window are one thing. House rules:
+  sharp corners, hairline frame, nothing decorative that isn't also data.
+-->
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="halo" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="2.8"/>
+    </filter>
+    <filter id="bighalo" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="5.5"/>
+    </filter>
+    <filter id="core" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="0.55"/>
+    </filter>
+  </defs>
+
+  <!-- ground: the app's own plane (Blossom Dark wine-plum) -->
+  <rect x="0" y="0" width="256" height="256" fill="#1c1016"/>
+
+  <!-- faint background stars (structure, not noise: they sit between rings) -->
+  <g fill="#c9b0bc" opacity="0.18">
+    <circle cx="40"  cy="70"  r="1.1"/>
+    <circle cx="216" cy="44"  r="1.0"/>
+    <circle cx="232" cy="196" r="1.1"/>
+    <circle cx="52"  cy="228" r="1.0"/>
+    <circle cx="148" cy="34"  r="0.9"/>
+    <circle cx="30"  cy="150" r="0.9"/>
+    <circle cx="226" cy="112" r="0.9"/>
+    <circle cx="118" cy="226" r="0.9"/>
+  </g>
+
+  <!-- graticule: the three altitudes, orbit → region → street (stone hairlines) -->
+  <g fill="none" stroke="#3b2631" stroke-width="1">
+    <circle cx="128" cy="132" r="110" opacity="0.9"/>
+    <circle cx="128" cy="132" r="78"  opacity="0.6"/>
+    <circle cx="128" cy="132" r="44"  opacity="0.5"/>
+  </g>
+
+  <!-- compass ticks: a map, oriented — and north is home's colour -->
+  <line x1="128" y1="14"  x2="128" y2="26"  stroke="#ec8fac" stroke-width="2"/>
+  <g stroke="#553948" stroke-width="2">
+    <line x1="128" y1="230" x2="128" y2="242"/>
+    <line x1="14"  y1="132" x2="26"  y2="132"/>
+    <line x1="230" y1="132" x2="242" y2="132"/>
+  </g>
+
+  <!-- ═══ flows: great-circle arcs, halo pass (blurred, saturated) ═══ -->
+  <g fill="none" stroke-linecap="round" filter="url(#halo)">
+    <path d="M 128 132 Q 172 92  190 74"  stroke="#5fafff" stroke-width="4.5" opacity="0.85"/>
+    <path d="M 128 132 Q 92  128 62  104" stroke="#af87ff" stroke-width="3"   opacity="0.8"/>
+    <path d="M 128 132 Q 98  164 86  196" stroke="#ff8700" stroke-width="3.5" opacity="0.8"/>
+    <path d="M 128 132 Q 106 92  104 52"  stroke="#5fd7ff" stroke-width="2.5" opacity="0.75"/>
+    <path d="M 128 132 Q 170 132 206 152" stroke="#87d787" stroke-width="3"   opacity="0.8"/>
+    <path d="M 128 132 Q 158 172 172 210" stroke="#ff5f5f" stroke-width="2.5" opacity="0.75"/>
+  </g>
+
+  <!-- ═══ flows: core pass (bright, thin) ═══ -->
+  <g fill="none" stroke-linecap="round" filter="url(#core)">
+    <path d="M 128 132 Q 172 92  190 74"  stroke="#b8dcff" stroke-width="2"/>
+    <path d="M 128 132 Q 92  128 62  104" stroke="#d9c6ff" stroke-width="1.4"/>
+    <path d="M 128 132 Q 98  164 86  196" stroke="#ffc98a" stroke-width="1.6"/>
+    <path d="M 128 132 Q 106 92  104 52"  stroke="#c8f2ff" stroke-width="1.2"/>
+    <path d="M 128 132 Q 170 132 206 152" stroke="#ccf2cc" stroke-width="1.4"/>
+    <path d="M 128 132 Q 158 172 172 210" stroke="#ffc0c0" stroke-width="1.2"/>
+  </g>
+
+  <!-- traffic particles on the busiest route (web): motion, frozen -->
+  <g fill="#dcefff">
+    <circle cx="152" cy="112" r="2.2"/>
+    <circle cx="172" cy="92"  r="1.8"/>
+  </g>
+  <g fill="#ffd9a6">
+    <circle cx="108" cy="158" r="1.8"/>
+  </g>
+
+  <!-- ═══ endpoint stars: halo then core ═══ -->
+  <g filter="url(#halo)">
+    <circle cx="190" cy="74"  r="9"   fill="#5fafff" opacity="0.9"/>
+    <circle cx="62"  cy="104" r="6"   fill="#af87ff" opacity="0.85"/>
+    <circle cx="86"  cy="196" r="7"   fill="#ff8700" opacity="0.85"/>
+    <circle cx="104" cy="52"  r="5"   fill="#5fd7ff" opacity="0.8"/>
+    <circle cx="206" cy="152" r="6"   fill="#87d787" opacity="0.85"/>
+    <circle cx="172" cy="210" r="5"   fill="#ff5f5f" opacity="0.8"/>
+  </g>
+  <g filter="url(#core)">
+    <circle cx="190" cy="74"  r="5.5" fill="#dcefff"/>
+    <circle cx="62"  cy="104" r="3.6" fill="#efe6ff"/>
+    <circle cx="86"  cy="196" r="4.2" fill="#ffe8c8"/>
+    <circle cx="104" cy="52"  r="3"   fill="#e6f9ff"/>
+    <circle cx="206" cy="152" r="3.6" fill="#e8ffe8"/>
+    <circle cx="172" cy="210" r="3"   fill="#ffe2e2"/>
+  </g>
+  <!-- the listener wears its exposure ring (risk, decomposed) -->
+  <circle cx="172" cy="210" r="8.5" fill="none" stroke="#ff5f5f" stroke-width="1.3" opacity="0.85"/>
+
+  <!-- ═══ the machine: the rose home star, ringed — you are here ═══ -->
+  <circle cx="128" cy="132" r="16" fill="#ec8fac" opacity="0.5" filter="url(#bighalo)"/>
+  <circle cx="128" cy="132" r="10" fill="#ec8fac" filter="url(#halo)" opacity="0.9"/>
+  <circle cx="128" cy="132" r="7"  fill="#ffd9e4" filter="url(#core)"/>
+  <circle cx="128" cy="132" r="2.6" fill="#3b1d2a"/>
+  <circle cx="128" cy="132" r="14" fill="none" stroke="#ec8fac" stroke-width="1.2" opacity="0.75"/>
+
+  <!-- hairline frame, sharp corners (stone) -->
+  <rect x="0.5" y="0.5" width="255" height="255" fill="none" stroke="#3b2631" stroke-width="1"/>
+</svg>

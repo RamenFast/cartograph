@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Cartograph
+GenericName=Network Map
+Comment=A living map of your machine's network — every process and who it is talking to, by real name
+Exec=cartograph-gtk
+Icon=cartograph
+Terminal=false
+Categories=System;Monitor;
+Keywords=network;flows;connections;monitor;firewall;map;traffic;who;
+StartupWMClass=cartograph-gtk

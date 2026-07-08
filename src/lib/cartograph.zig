@@ -8,6 +8,10 @@
 
 const std = @import("std");
 
+/// The build's version string, injected from build.zig.zon (one source of truth).
+/// Every binary's `--version` prints this; the packaging scripts read the same field.
+pub const version: []const u8 = @import("buildinfo").version;
+
 pub const flow = @import("flow.zig");
 pub const identity = @import("identity.zig");
 pub const sparkline = @import("sparkline.zig");

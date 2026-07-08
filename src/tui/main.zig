@@ -37,9 +37,39 @@ pub fn main(init: std.process.Init) !void {
             use_ipc = true;
         } else if (std.mem.eql(u8, a, "--socket")) {
             use_ipc = true;
-            sock_path = args.next();
+            sock_path = args.next() orelse return fail(io, "--socket needs a path", .{});
         } else if (std.mem.eql(u8, a, "--geoip")) {
-            geoip_dir = args.next();
+            geoip_dir = args.next() orelse return fail(io, "--geoip needs a directory", .{});
+        } else if (std.mem.eql(u8, a, "--version") or std.mem.eql(u8, a, "-V")) {
+            var buf: [64]u8 = undefined;
+            var fw = std.Io.File.stdout().writer(io, &buf);
+            try fw.interface.print("cartograph {s}\n", .{cartograph.version});
+            try fw.interface.flush();
+            return;
+        } else if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
+            var buf: [1024]u8 = undefined;
+            var fw = std.Io.File.stdout().writer(io, &buf);
+            try fw.interface.writeAll(
+                \\cartograph — live attributed-flow TUI (the terminal expression)
+                \\
+                \\usage:
+                \\  cartograph                    live map, capturing in-process (unprivileged)
+                \\  cartograph --ipc              read binary IPC frames from stdin:
+                \\                                    surveyor serve | cartograph --ipc
+                \\  cartograph --socket <path>    connect to `surveyor serve --socket <path>`
+                \\                                (full-duplex: profile/lens toggles go upstream)
+                \\  cartograph --version | --help
+                \\
+                \\flags: --geoip <dir>  ASN+country mmdb dir for in-process capture
+                \\                      (default ~/.local/share/cartograph/geoip)
+                \\
+                \\keys:  q quit · j/k or ↑/↓ select · Esc clear · p or Tab profile · 1-6 lenses
+                \\
+            );
+            try fw.interface.flush();
+            return;
+        } else {
+            return fail(io, "unknown flag '{s}' — see `cartograph --help`", .{a});
         }
     }
     // Same default as surveyor: in-process capture enriches locally (parity); over
@@ -51,7 +81,15 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    var app = try App.init(gpa, io);
+    // Pre-flight the two first-run stumbles *before* entering the alt screen, so each
+    // fails as one plain line naming the fix — never a stack trace mid-raw-mode.
+    if (sock_path) |p| checkSocket(io, p);
+
+    var app = App.init(gpa, io) catch |err| switch (err) {
+        error.FileNotFound, error.NoDevice, error.AccessDenied => fail(io, "no controlling terminal — cartograph is a TUI; run it in a terminal " ++
+            "(for scripts, use `surveyor snapshot --json`)", .{}),
+        else => return err,
+    };
     defer app.deinit();
     app.geoip_dir = geoip_dir;
 
@@ -65,6 +103,23 @@ pub fn main(init: std.process.Init) !void {
         if (sock_path != null) app.upstream_fd = ipc_fd;
         try app.runIpc(ipc_fd);
     } else try app.runLocal();
+}
+
+/// A clean one-line failure: message to stderr, exit 2 — never a stack trace.
+fn fail(io: std.Io, comptime fmt: []const u8, fmt_args: anytype) noreturn {
+    var buf: [512]u8 = undefined;
+    var fw = std.Io.File.stderr().writer(io, &buf);
+    fw.interface.print("cartograph: " ++ fmt ++ "\n", fmt_args) catch {};
+    fw.interface.flush() catch {};
+    std.process.exit(2);
+}
+
+/// Pre-flight the surveyor socket so a bad path fails with the fix named, before the
+/// terminal enters the alt screen (an error inside raw mode scrambles the shell).
+fn checkSocket(io: std.Io, path: []const u8) void {
+    std.Io.Dir.cwd().access(io, path, .{}) catch {
+        fail(io, "no surveyor socket at '{s}' — start one with: surveyor serve --socket {s}", .{ path, path });
+    };
 }
 
 const App = struct {

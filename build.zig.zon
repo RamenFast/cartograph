@@ -1,6 +1,6 @@
 .{
     .name = .cartograph,
-    .version = "0.1.0",
+    .version = "1.0.0",
     .fingerprint = 0x52d56f79b66b1e60,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},

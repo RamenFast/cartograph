@@ -23,3 +23,6 @@ vmlinux.h
 # collaborator local scratch (Nexus/hermes working artifacts) — kept on disk, not committed.
 # Durable, project-relevant outputs belong in docs/ instead. See docs/STRUCTURE.md.
 /.dextroesoteric/
+
+# packaging outputs — assets go to the GitHub release, never to git
+/packaging/dist/

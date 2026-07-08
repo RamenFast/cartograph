@@ -44,6 +44,8 @@ const SessionState = cartograph.SessionState;
 const GCallback = *const fn () callconv(.c) void;
 const GUnixFDSourceFunc = *const fn (fd: c_int, condition: c_uint, user_data: ?*anyopaque) callconv(.c) c_int;
 const GtkApplicationActivate = *const fn (app: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void;
+// GtkButton "clicked" / GtkToggleButton "toggled": (button, user_data)
+const GtkButtonCb = *const fn (button: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void;
 // GtkEventControllerKey "key-pressed": (controller, keyval, keycode, modifiers, user_data) -> handled
 const GtkKeyPressed = *const fn (ctrl: ?*anyopaque, keyval: c_uint, keycode: c_uint, state: c_uint, user_data: ?*anyopaque) callconv(.c) c_int;
 // GtkListBox "row-selected": (box, row-or-null, user_data)
@@ -75,12 +77,17 @@ extern fn g_object_get_data(object: ?*anyopaque, key: [*:0]const u8) ?*anyopaque
 
 extern fn gtk_application_window_new(app: ?*anyopaque) ?*anyopaque;
 extern fn gtk_window_set_title(window: ?*anyopaque, title: [*:0]const u8) void;
+extern fn gtk_window_set_icon_name(window: ?*anyopaque, name: [*:0]const u8) void;
 extern fn gtk_window_set_default_size(window: ?*anyopaque, width: c_int, height: c_int) void;
 extern fn gtk_window_present(window: ?*anyopaque) void;
 extern fn gtk_window_set_child(window: ?*anyopaque, child: ?*anyopaque) void;
 
 extern fn gtk_scrolled_window_new() ?*anyopaque;
 extern fn gtk_scrolled_window_set_child(sw: ?*anyopaque, child: ?*anyopaque) void;
+// GtkPolicyType
+const GTK_POLICY_AUTOMATIC: c_uint = 1;
+const GTK_POLICY_NEVER: c_uint = 2;
+extern fn gtk_scrolled_window_set_policy(sw: ?*anyopaque, hscrollbar_policy: c_uint, vscrollbar_policy: c_uint) void;
 
 extern fn gtk_paned_new(orientation: c_uint) ?*anyopaque;
 extern fn gtk_paned_set_start_child(paned: ?*anyopaque, child: ?*anyopaque) void;
@@ -105,6 +112,8 @@ extern fn gtk_image_set_pixel_size(image: ?*anyopaque, pixel_size: c_int) void;
 
 extern fn gtk_label_new(str: ?[*:0]const u8) ?*anyopaque;
 extern fn gtk_label_set_markup(label: ?*anyopaque, markup: [*:0]const u8) void;
+const PANGO_ELLIPSIZE_END: c_uint = 3;
+extern fn gtk_label_set_ellipsize(label: ?*anyopaque, mode: c_uint) void;
 extern fn gtk_label_set_xalign(label: ?*anyopaque, xalign: f32) void;
 extern fn gtk_label_set_yalign(label: ?*anyopaque, yalign: f32) void;
 extern fn gtk_label_set_selectable(label: ?*anyopaque, setting: c_int) void;
@@ -122,11 +131,100 @@ extern fn g_unix_fd_add(fd: c_int, condition: c_uint, function: GUnixFDSourceFun
 extern fn gtk_event_controller_key_new() ?*anyopaque;
 extern fn gtk_widget_add_controller(widget: ?*anyopaque, controller: ?*anyopaque) void;
 
-// design-language constants shared with the TUI's intent (DESIGN-LANGUAGE.md)
-const amber = "#ffaf00"; // fresh / first-seen "glow until greeted"
-const sky = "#5fafff"; // download-leaning rate / the cursor
+// the house chrome (ben-ui-design): one app-wide CSS provider + a real headerbar
+const GTK_STYLE_PROVIDER_PRIORITY_APPLICATION: c_uint = 600;
+extern fn gtk_css_provider_new() ?*anyopaque;
+extern fn gtk_css_provider_load_from_string(provider: ?*anyopaque, string: [*:0]const u8) void;
+extern fn gtk_style_context_add_provider_for_display(display: ?*anyopaque, provider: ?*anyopaque, priority: c_uint) void;
+extern fn gdk_display_get_default() ?*anyopaque;
+extern fn gtk_widget_add_css_class(widget: ?*anyopaque, css_class: [*:0]const u8) void;
+
+extern fn gtk_header_bar_new() ?*anyopaque;
+extern fn gtk_header_bar_pack_start(bar: ?*anyopaque, child: ?*anyopaque) void;
+extern fn gtk_header_bar_pack_end(bar: ?*anyopaque, child: ?*anyopaque) void;
+extern fn gtk_header_bar_set_title_widget(bar: ?*anyopaque, title_widget: ?*anyopaque) void;
+extern fn gtk_window_set_titlebar(window: ?*anyopaque, titlebar: ?*anyopaque) void;
+
+extern fn gtk_button_new_with_label(label: [*:0]const u8) ?*anyopaque;
+extern fn gtk_button_set_label(button: ?*anyopaque, label: [*:0]const u8) void;
+extern fn gtk_toggle_button_new_with_label(label: [*:0]const u8) ?*anyopaque;
+extern fn gtk_toggle_button_set_active(button: ?*anyopaque, is_active: c_int) void;
+extern fn gtk_toggle_button_get_active(button: ?*anyopaque) c_int;
+
+// ---- the house chrome palette: Blossom Dark (ben-ui-design) -------------------
+// Canon = phosphor crates/phosphor-app/src/theme.rs, mirrored by sysmon — the
+// values here are byte-identical to that Palette. Chrome tokens only: the *data*
+// hues (category, exposure) stay in the shared view-model (`Category.hex()`,
+// `Exposure.hex()`, D14) so every frontend keeps the same semantic colours.
+const plane = "#1c1016"; // window ground (wine-plum near-black)
+const surface = "#281821"; // panel face
+const ink = "#f5eaef"; // primary text
+const muted = "#917986"; // faint / structural text (was grey `dim`)
+const accent = "#ec8fac"; // sakura rose — the one bold hue (cursor, title, selection)
+const gold = "#e8c87e"; // headline numbers + the fresh "glow until greeted" (sysmon `value`)
+// data hues local to the flow rows (two readings, two obvious colours):
+const sky = "#5fafff"; // download-leaning rate
 const tan = "#d7af87"; // upload-leaning rate
-const dim = "#8a8a8a"; // grey: idle / structural
+
+/// The app-wide stylesheet: sharp corners everywhere, hairline 1px frames, no
+/// shadows — depth only as two-stroke stone bevels on the few carved controls
+/// (raised at rest, inverted when pressed; surface changes, shape never does).
+const house_css =
+    \\window { background-color: #1c1016; color: #f5eaef; }
+    \\decoration { border-radius: 0; }
+    \\headerbar {
+    \\  background-color: #281821; background-image: none; box-shadow: none;
+    \\  border-bottom: 1px solid rgba(244,233,238,0.322);
+    \\  min-height: 42px; padding: 0 6px; border-radius: 0;
+    \\}
+    \\headerbar windowcontrols button { border-radius: 0; }
+    \\paned > separator { min-width: 1px; min-height: 1px;
+    \\  background-color: rgba(244,233,238,0.141); background-image: none; }
+    \\scrollbar { background-color: transparent; }
+    \\scrollbar slider { background-color: #c9b0bc; border-radius: 0;
+    \\  min-width: 8px; min-height: 28px; transition: background-color 120ms ease; }
+    \\scrollbar slider:hover { background-color: #f5eaef; }
+    \\scrollbar slider:active { background-color: #ec8fac; }
+    \\.cg-chrome { padding: 2px 0; }
+    \\.cg-list { background-color: #281821;
+    \\  border: 1px solid rgba(244,233,238,0.141); margin: 0 8px 8px 8px; }
+    \\.cg-list row { background-color: transparent; border: 1px solid transparent;
+    \\  padding: 1px 0; transition: background-color 120ms ease; border-radius: 0; }
+    \\.cg-list row:hover { background-color: #33212c; }
+    \\.cg-list row:selected { background-color: rgba(236,143,172,0.16);
+    \\  border-color: #ec8fac; }
+    \\.cg-why {
+    \\  background-color: #281821;
+    \\  border-top: 1px solid #1d1117; border-left: 1px solid #1d1117;
+    \\  border-bottom: 1px solid #553948; border-right: 1px solid #553948;
+    \\  margin: 8px 8px 8px 0;
+    \\}
+    \\.cg-why selection { background-color: #ec8fac; color: #1a0e14; }
+    \\button.cg-stone {
+    \\  background-color: #3b2631; background-image: none; box-shadow: none;
+    \\  color: #f5eaef; font-family: monospace; font-size: 12px;
+    \\  border-radius: 0; padding: 2px 12px; min-height: 24px;
+    \\  border-top: 1px solid #553948; border-left: 1px solid #553948;
+    \\  border-bottom: 1px solid #1d1117; border-right: 1px solid #1d1117;
+    \\  transition: background-color 120ms ease;
+    \\}
+    \\button.cg-stone:hover { background-color: #4a3140; }
+    \\button.cg-stone:active {
+    \\  background-color: #33212c;
+    \\  border-top-color: #1d1117; border-left-color: #1d1117;
+    \\  border-bottom-color: #553948; border-right-color: #553948;
+    \\}
+    \\button.cg-lens {
+    \\  background-color: #281821; background-image: none; box-shadow: none;
+    \\  color: #917986; font-family: monospace; font-size: 11px;
+    \\  border: 1px solid rgba(244,233,238,0.141); border-radius: 0;
+    \\  padding: 0 7px; min-height: 22px;
+    \\  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+    \\}
+    \\button.cg-lens:hover { color: #c9b0bc; }
+    \\button.cg-lens:checked { color: #f5eaef; border-color: #ec8fac;
+    \\  background-color: rgba(236,143,172,0.22); }
+;
 
 // ---- app state --------------------------------------------------------------
 
@@ -140,6 +238,8 @@ const Row = struct {
     icon: flow.Str(128) = .{}, // last icon name set, to skip redundant updates
 };
 
+const lens_count = std.enums.values(lens.Lens).len;
+
 const App = struct {
     gpa: std.mem.Allocator,
     table: FlowTable,
@@ -147,9 +247,12 @@ const App = struct {
     upstream_fd: ?std.posix.fd_t = null, // writable socket → surveyor (null over a pipe)
     session: SessionState = .{},
     gapp: ?*anyopaque = null,
-    header: ?*anyopaque = null, // summary + profile/lens + cursor lines
+    header: ?*anyopaque = null, // summary + cursor + column names
     listbox: ?*anyopaque = null,
     why_label: ?*anyopaque = null, // the docked narration panel
+    profile_btn: ?*anyopaque = null, // the carved stone control (headerbar)
+    lens_btns: [lens_count]?*anyopaque = @splat(null), // flat toggle rail (headerbar)
+    suppress_lens: bool = false, // guard: programmatic set_active also fires "toggled"
     rows: std.AutoHashMapUnmanaged(FlowKey, Row) = .empty,
     row_keys: std.AutoHashMapUnmanaged(usize, FlowKey) = .empty, // row widget ptr → key
     icons: cartograph.appicon.Index, // exe/comm → XDG icon name (S4)
@@ -227,12 +330,35 @@ const App = struct {
         gtk_label_set_markup(label, @ptrCast(self.scratch.ptr));
     }
 
+    /// Mirror the session into the headerbar controls: the profile button's label and
+    /// each lens toggle's checked state. Buttons and keys drive the same session, so
+    /// whichever one acted (or an upstream echo), the controls always agree with it.
+    fn syncControls(self: *App) void {
+        if (self.profile_btn) |btn| {
+            var nz: [64]u8 = undefined;
+            const name = self.session.profile.label();
+            if (name.len < nz.len - 1) {
+                @memcpy(nz[0..name.len], name);
+                nz[name.len] = 0;
+                gtk_button_set_label(btn, @ptrCast(&nz));
+            }
+        }
+        const set = self.session.activeLenses();
+        self.suppress_lens = true;
+        defer self.suppress_lens = false;
+        inline for (std.enums.values(lens.Lens), 0..) |l, i| {
+            if (self.lens_btns[i]) |btn|
+                gtk_toggle_button_set_active(btn, @intFromBool(set.contains(l)));
+        }
+    }
+
     /// The per-tick refresh: header lines, each row (created, updated, re-ranked),
     /// and the why panel — no whole-world rebuild anywhere.
     fn redraw(self: *App) void {
         const flows = self.table.snapshot(self.gpa) catch return;
         defer self.gpa.free(flows);
 
+        self.syncControls();
         self.setLabelMarkup(self.header, writeHeaderMarkup, .{ flows, self.session });
 
         const set = self.session.activeLenses();
@@ -244,6 +370,9 @@ const App = struct {
                 gtk_image_set_pixel_size(image, 18);
                 const label = gtk_label_new(null);
                 gtk_label_set_xalign(label, 0);
+                // rows clip gracefully at the pane edge (the list never h-scrolls —
+                // GTK's scroll-to-focused-row would shove the whole view sideways)
+                gtk_label_set_ellipsize(label, PANGO_ELLIPSIZE_END);
                 const hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
                 gtk_widget_set_margin_start(hbox, 6);
                 gtk_box_append(hbox, image);
@@ -319,7 +448,9 @@ fn span(w: *Writer, color: []const u8, s: []const u8, width: usize) Writer.Error
     try w.writeAll("</span>");
 }
 
-/// The header block: summary, profile/lens rail, cursor line, and column names.
+/// The header block: summary line, the shared cursor, and column names. The
+/// profile/lens rail lives in the headerbar as real controls now (house law:
+/// essential actions get buttons) — the keys still work, same session behind both.
 fn writeHeaderMarkup(w: *Writer, flows: []*Flow, session: SessionState) Writer.Error!void {
     const set = session.activeLenses();
     var down_total: u64 = 0;
@@ -334,39 +465,28 @@ fn writeHeaderMarkup(w: *Writer, flows: []*Flow, session: SessionState) Writer.E
     try w.writeAll("<span font_family=\"monospace\">");
     var dbuf: [32]u8 = undefined;
     var ubuf: [32]u8 = undefined;
+    // headline numbers in gold (the sysmon `value` token); direction rates keep
+    // their two-reading pair (↓ sky / ↑ tan) — two readings, two obvious colours
     try w.print(
-        "<b>▟▖ cartograph</b>  <span foreground=\"{s}\">{d} flows · {d} attributed</span>   " ++
+        "<span foreground=\"{s}\"><b>{d}</b></span><span foreground=\"{s}\"> flows · </span>" ++
+            "<span foreground=\"{s}\"><b>{d}</b></span><span foreground=\"{s}\"> attributed   </span>" ++
             "<span foreground=\"{s}\">↓ {s}</span>  <span foreground=\"{s}\">↑ {s}</span>\n",
-        .{ dim, flows.len, attributed, sky, cartograph.humanRate(&dbuf, down_total), tan, cartograph.humanRate(&ubuf, up_total) },
+        .{ gold, flows.len, muted, gold, attributed, muted, sky, cartograph.humanRate(&dbuf, down_total), tan, cartograph.humanRate(&ubuf, up_total) },
     );
 
-    // profile + lens rail — surveyor's authoritative session, never a private cache
-    // (D22); ◌ view-local scope: these controls change this window only (D23).
-    const sc = cartograph.scope.Scope.view;
-    try w.print(
-        "<span foreground=\"{s}\">profile </span><b>{s}</b>  <span foreground=\"{s}\">{s} {s}</span>   <span foreground=\"{s}\">lens</span> ",
-        .{ dim, session.profile.label(), dim, sc.glyph(), sc.label(), dim },
-    );
-    inline for (std.enums.values(lens.Lens), 1..) |l, n| {
-        const on = set.contains(l);
-        const color = if (on) sky else dim;
-        const weight_open = if (on) "<b>" else "";
-        const weight_close = if (on) "</b>" else "";
-        try w.print("<span foreground=\"{s}\">{s}{d}:{s}{s}</span> ", .{ color, weight_open, n, l.label(), weight_close });
-    }
-    try w.writeAll("\n");
-
-    // the shared cursor (D24) — the same describe() line the agent's focus event carries
+    // the shared cursor (D24) — the same describe() line the agent's focus event
+    // carries, in the accent: the one shared thing every observer holds together
     var fb: [160]u8 = undefined;
-    try w.print("<span foreground=\"{s}\">⌖ ", .{sky});
+    try w.print("<span foreground=\"{s}\">⌖ ", .{accent});
     try esc(w, session.focus.describe(&fb));
     try w.writeAll("</span>\n\n");
 
-    // column names, mirroring the row layout below
-    try w.print("<span foreground=\"{s}\">  ", .{dim});
+    // column names, mirroring the row layout below (widths sized so the full
+    // lens set fits the default pane — no h-scroll, rows ellipsize past the edge)
+    try w.print("<span foreground=\"{s}\">  ", .{muted});
     try col(w, "APP", 15);
-    try col(w, "ENDPOINT", 32);
-    if (set.contains(.endpoint)) try col(w, "WHO", 24);
+    try col(w, "ENDPOINT", 30);
+    if (set.contains(.endpoint)) try col(w, "WHO", 21);
     if (set.contains(.volume)) {
         try col(w, "RATE", 12);
         try col(w, "TOTAL", 10);
@@ -379,9 +499,9 @@ fn writeHeaderMarkup(w: *Writer, flows: []*Flow, session: SessionState) Writer.E
 fn writeRowMarkup(w: *Writer, f: *Flow, set: lens.Set) Writer.Error!void {
     try w.writeAll("<span font_family=\"monospace\">");
     const cat = f.category;
-    // fresh = amber dot (first-seen; "glow until greeted")
+    // fresh = gold dot (first-seen; "glow until greeted")
     if (f.fresh) {
-        try w.print("<span foreground=\"{s}\">●</span> ", .{amber});
+        try w.print("<span foreground=\"{s}\">●</span> ", .{gold});
     } else {
         try w.writeAll("  ");
     }
@@ -396,29 +516,29 @@ fn writeRowMarkup(w: *Writer, f: *Flow, set: lens.Set) Writer.Error!void {
     const ep = if (f.remote_name.len > 0) blk: {
         var ew = Writer.fixed(&ebuf);
         const name = f.remote_name.slice();
-        ew.writeAll(name[0..@min(name.len, 25)]) catch {};
+        ew.writeAll(name[0..@min(name.len, 23)]) catch {};
         ew.print(":{d}", .{f.key.remote_port}) catch {};
         break :blk ew.buffered();
     } else cartograph.endpoint(&ebuf, f.key.remote, f.key.remote_port);
-    try span(w, cat.hex(), ep, 32);
+    try span(w, cat.hex(), ep, 30);
 
     if (set.contains(.endpoint)) {
         var wbuf: [48]u8 = undefined;
         const who = f.whoDisplay(&wbuf);
-        try span(w, dim, who[0..@min(who.len, 23)], 24);
+        try span(w, muted, who[0..@min(who.len, 20)], 21);
     }
 
     if (set.contains(.volume)) {
         var rbuf: [16]u8 = undefined;
         var sbuf: [16]u8 = undefined;
         try span(w, rateColor(f), cartograph.humanRate(&rbuf, f.throughput()), 12);
-        try span(w, dim, cartograph.humanBytes(&sbuf, f.rx_bytes + f.tx_bytes), 10);
+        try span(w, muted, cartograph.humanBytes(&sbuf, f.rx_bytes + f.tx_bytes), 10);
     }
 
     if (set.contains(.endpoint)) {
         var ttbuf: [16]u8 = undefined;
         const rtt = if (f.rtt_us == 0) "·" else std.fmt.bufPrint(&ttbuf, "{d:.0}ms", .{@as(f64, @floatFromInt(f.rtt_us)) / 1000.0}) catch "·";
-        try span(w, dim, rtt, 7);
+        try span(w, muted, rtt, 7);
     }
     try w.writeAll("</span>");
 }
@@ -427,7 +547,7 @@ fn writeRowMarkup(w: *Writer, f: *Flow, set: lens.Set) Writer.Error!void {
 fn writeWhyMarkup(w: *Writer, selected: ?*Flow, session: SessionState, now_ms: i64, has_selection: bool) Writer.Error!void {
     try w.writeAll("<span font_family=\"monospace\">");
     var fb: [160]u8 = undefined;
-    try w.print("<span foreground=\"{s}\">⌖ ", .{sky});
+    try w.print("<span foreground=\"{s}\">⌖ ", .{accent});
     try esc(w, session.focus.describe(&fb));
     try w.writeAll("</span>\n\n");
 
@@ -455,15 +575,15 @@ fn writeWhyMarkup(w: *Writer, selected: ?*Flow, session: SessionState, now_ms: i
         cartograph.why.describe(&dw, f, @max(now_ms, f.last_seen_ms)) catch {};
         try esc(w, dw.buffered());
     } else if (has_selection) {
-        try w.print("<span foreground=\"{s}\">that conversation has ended</span>", .{dim});
+        try w.print("<span foreground=\"{s}\">that conversation has ended</span>", .{muted});
     } else {
-        try w.print("<span foreground=\"{s}\">click a flow (or ↑/↓) to ask why it exists</span>", .{dim});
+        try w.print("<span foreground=\"{s}\">click a flow (or ↑/↓) to ask why it exists</span>", .{muted});
     }
     try w.writeAll("</span>");
 }
 
 fn rateColor(f: *Flow) []const u8 {
-    if (f.throughput() == 0) return dim;
+    if (f.throughput() == 0) return muted;
     return if (f.tx_rate > f.rx_rate) tan else sky;
 }
 
@@ -576,32 +696,106 @@ fn onKeyPressed(_: ?*anyopaque, keyval: c_uint, _: c_uint, _: c_uint, user_data:
     return 1; // handled
 }
 
+/// The stone control: cycle the lens profile (the `p` key, as a button).
+fn onProfileClicked(_: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
+    const app: *App = @ptrCast(@alignCast(user_data.?));
+    app.session.nextProfile();
+    app.sendUpstream(.{ .profile = app.session.profile });
+    app.redraw();
+}
+
+/// A lens toggle flipped — by click, or programmatically from `syncControls`
+/// (the suppress flag separates the two; only real clicks drive the session).
+fn onLensToggled(btn: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
+    const app: *App = @ptrCast(@alignCast(user_data.?));
+    if (app.suppress_lens) return;
+    const tag = @intFromPtr(g_object_get_data(btn, "cg-lens")); // 1-based (0 ≠ "no data")
+    const lens_keys = std.enums.values(lens.Lens);
+    if (tag == 0 or tag > lens_keys.len) return;
+    const l = lens_keys[tag - 1];
+    const on = gtk_toggle_button_get_active(btn) != 0;
+    app.session.toggleLens(l, on);
+    app.sendUpstream(.{ .lens_toggle = .{ .lens = l, .on = on } });
+    app.redraw();
+}
+
 fn onActivate(gapp: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
     const app: *App = @ptrCast(@alignCast(user_data.?));
+
+    // the house chrome: one app-wide stylesheet (Blossom Dark), sharp everywhere
+    const css = gtk_css_provider_new();
+    gtk_css_provider_load_from_string(css, house_css);
+    gtk_style_context_add_provider_for_display(gdk_display_get_default(), css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 
     const window = gtk_application_window_new(gapp);
     gtk_window_set_title(window, "cartograph — live flows");
     gtk_window_set_default_size(window, 1280, 720);
+    // The desktop icon (hicolor "cartograph", installed by the package). Harmless
+    // no-op when running from a build tree without the icon installed.
+    gtk_window_set_icon_name(window, "cartograph");
 
     // a key controller on the window catches "p" / "1–6" / Escape anywhere
     const keys = gtk_event_controller_key_new();
     _ = g_signal_connect_data(keys, "key-pressed", @ptrCast(@as(GtkKeyPressed, onKeyPressed)), app, null, 0);
     gtk_widget_add_controller(window, keys);
 
+    // the headerbar: brand on the left; the profile stone + lens rail on the right.
+    // Buttons and keys drive the same session (D22) — two hands, one truth.
+    const bar = gtk_header_bar_new();
+    const brand = gtk_label_new(null);
+    gtk_label_set_markup(brand, "<span font_family=\"monospace\" foreground=\"" ++ accent ++ "\"><b>▟▖ cartograph</b></span>" ++
+        "<span font_family=\"monospace\" foreground=\"" ++ muted ++ "\"> · live flows</span>");
+    gtk_header_bar_pack_start(bar, brand);
+    gtk_header_bar_set_title_widget(bar, gtk_label_new("")); // brand sits left; no centered twin
+
+    const profile_btn = gtk_button_new_with_label("profile");
+    gtk_widget_add_css_class(profile_btn, "cg-stone");
+    _ = g_signal_connect_data(profile_btn, "clicked", @ptrCast(@as(GtkButtonCb, onProfileClicked)), app, null, 0);
+    gtk_header_bar_pack_end(bar, profile_btn); // packed first → rightmost
+    app.profile_btn = profile_btn;
+
+    // lens toggles, created in lens order…
+    inline for (std.enums.values(lens.Lens), 0..) |l, i| {
+        var nz: [32]u8 = undefined;
+        const name = l.label();
+        const n = @min(name.len, nz.len - 1);
+        @memcpy(nz[0..n], name[0..n]);
+        nz[n] = 0;
+        const btn = gtk_toggle_button_new_with_label(@ptrCast(&nz));
+        gtk_widget_add_css_class(btn, "cg-lens");
+        g_object_set_data(btn, "cg-lens", @ptrFromInt(i + 1));
+        _ = g_signal_connect_data(btn, "toggled", @ptrCast(@as(GtkButtonCb, onLensToggled)), app, null, 0);
+        app.lens_btns[i] = btn;
+    }
+    // …and packed in reverse (pack_end fills right-to-left), so lens 1 reads leftmost
+    var li: usize = lens_count;
+    while (li > 0) {
+        li -= 1;
+        gtk_header_bar_pack_end(bar, app.lens_btns[li]);
+    }
+    gtk_window_set_titlebar(window, bar);
+
     // left: header + the live flow list
     const header = gtk_label_new(null);
     gtk_label_set_xalign(header, 0);
+    // ellipsize: a street focus on a full v6 pair is longer than any sane pane —
+    // without this the label's natural width shoves the paned off the window.
+    // The complete string always lives in the Why panel; the header is status.
+    gtk_label_set_ellipsize(header, PANGO_ELLIPSIZE_END);
     gtk_widget_set_margin_start(header, 10);
     gtk_widget_set_margin_top(header, 8);
+    gtk_widget_add_css_class(header, "cg-chrome");
     app.header = header;
 
     const listbox = gtk_list_box_new();
     gtk_list_box_set_sort_func(listbox, onSortRows, app, null);
     _ = g_signal_connect_data(listbox, "row-selected", @ptrCast(@as(GtkRowSelected, onRowSelected)), app, null, 0);
+    gtk_widget_add_css_class(listbox, "cg-list");
     app.listbox = listbox;
 
     const scroller = gtk_scrolled_window_new();
     gtk_scrolled_window_set_child(scroller, listbox);
+    gtk_scrolled_window_set_policy(scroller, GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_widget_set_vexpand(scroller, 1);
 
     const left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
@@ -615,17 +809,21 @@ fn onActivate(gapp: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
     gtk_label_set_selectable(why_label, 1); // it's data — let the user copy it
     gtk_widget_set_margin_start(why_label, 12);
     gtk_widget_set_margin_end(why_label, 12);
-    gtk_widget_set_margin_top(why_label, 8);
+    gtk_widget_set_margin_top(why_label, 10);
+    gtk_widget_set_margin_bottom(why_label, 10);
     gtk_widget_set_valign(why_label, GTK_ALIGN_START);
     app.why_label = why_label;
 
+    // the Why panel is the app's reading surface — it gets the engraved plate
+    // (the one dimensional element; everything lower-tier stays flat and boxy)
     const why_scroller = gtk_scrolled_window_new();
     gtk_scrolled_window_set_child(why_scroller, why_label);
+    gtk_widget_add_css_class(why_scroller, "cg-why");
 
     const paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_paned_set_start_child(paned, left);
     gtk_paned_set_end_child(paned, why_scroller);
-    gtk_paned_set_position(paned, 780);
+    gtk_paned_set_position(paned, 825);
     gtk_window_set_child(window, paned);
 
     app.redraw(); // draw the (possibly empty) table immediately
@@ -635,6 +833,43 @@ fn onActivate(gapp: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
 }
 
 // ---- entry point ------------------------------------------------------------
+
+/// A clean one-line failure: message to stderr, exit 2 — never a stack trace.
+fn fail(io: std.Io, comptime fmt: []const u8, fmt_args: anytype) noreturn {
+    var buf: [512]u8 = undefined;
+    var fw = std.Io.File.stderr().writer(io, &buf);
+    fw.interface.print("cartograph-gtk: " ++ fmt ++ "\n", fmt_args) catch {};
+    fw.interface.flush() catch {};
+    std.process.exit(2);
+}
+
+/// Spawn `surveyor serve` as our private producer and hand back its stdout pipe.
+/// The child inherits stderr (its degrade notes stay visible) and dies with us.
+/// PATH resolves the installed binary; a build tree finds its sibling first.
+fn spawnSurveyor(io: std.Io) !std.process.Child {
+    // Prefer the surveyor sitting next to this binary (the build tree / staged
+    // install case); fall back to PATH (the packaged case).
+    var self_buf: [4096]u8 = undefined;
+    var argv0: []const u8 = "surveyor";
+    var sib_buf: [4096]u8 = undefined;
+    if (std.Io.Dir.readLinkAbsolute(io, "/proc/self/exe", &self_buf)) |self_len| {
+        const self_path = self_buf[0..self_len];
+        if (std.fs.path.dirname(self_path)) |dir| {
+            const sibling = std.fmt.bufPrint(&sib_buf, "{s}/surveyor", .{dir}) catch null;
+            if (sibling) |s| {
+                if (std.Io.Dir.cwd().access(io, s, .{})) |_| {
+                    argv0 = s;
+                } else |_| {}
+            }
+        }
+    } else |_| {}
+    return std.process.spawn(io, .{
+        .argv = &.{ argv0, "serve" },
+        .stdin = .close,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    });
+}
 
 fn connectWithRetry(io: std.Io, path: []const u8) !std.posix.fd_t {
     // surveyor may still be binding its socket when we launch; give it a moment.
@@ -667,14 +902,66 @@ pub fn main(init: std.process.Init) !void {
     var args = std.process.Args.Iterator.init(init.minimal.args);
     _ = args.next();
     while (args.next()) |a| {
-        if (std.mem.eql(u8, a, "--socket")) sock_path = args.next();
+        if (std.mem.eql(u8, a, "--socket")) {
+            sock_path = args.next() orelse return fail(io, "--socket needs a path", .{});
+        } else if (std.mem.eql(u8, a, "--version") or std.mem.eql(u8, a, "-V")) {
+            var buf: [64]u8 = undefined;
+            var fw = std.Io.File.stdout().writer(io, &buf);
+            try fw.interface.print("cartograph-gtk {s}\n", .{cartograph.version});
+            try fw.interface.flush();
+            return;
+        } else if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
+            var buf: [1024]u8 = undefined;
+            var fw = std.Io.File.stdout().writer(io, &buf);
+            try fw.interface.writeAll(
+                \\cartograph-gtk — live attributed-flow window (the GTK expression)
+                \\
+                \\usage:
+                \\  surveyor serve | cartograph-gtk         frames on stdin (the pipe)
+                \\  cartograph-gtk --socket <path>          connect to `surveyor serve --socket <path>`
+                \\                                          (full-duplex: toggles go upstream)
+                \\  cartograph-gtk --version | --help
+                \\
+                \\keys:  p profile · 1-6 lenses · ↑/↓ select · esc orbit
+                \\       (the headerbar buttons drive the same session as the keys)
+                \\
+            );
+            try fw.interface.flush();
+            return;
+        } else {
+            return fail(io, "unknown flag '{s}' — see `cartograph-gtk --help`", .{a});
+        }
     }
 
-    // The IPC source: a connected Unix socket (the daemon boundary) or stdin (the pipe).
+    // The IPC source, by preference:
+    //   --socket <path>      the shared daemon boundary (full-duplex)
+    //   frames on stdin      `surveyor serve | cartograph-gtk` (pipe/socket/replay file)
+    //   neither              spawn our own `surveyor serve` child — the double-click
+    //                        path. Frames can only arrive if something is actually
+    //                        wired to stdin: a FIFO, a socketpair, or a recorded-frames
+    //                        file. Anything else (a terminal, the menu launcher's
+    //                        /dev/null, a closed fd) has no producer behind it, so spawn.
+    //                        A tty check can't make this call — desktop launchers hand
+    //                        every app /dev/null: not a tty *and* not a pipe.
+    const stdin_feeds_frames = blk: {
+        const st = std.Io.File.stdin().stat(io) catch break :blk false;
+        break :blk switch (st.kind) {
+            .named_pipe, .unix_domain_socket, .file => true,
+            else => false,
+        };
+    };
+    var spawned: ?std.process.Child = null;
     const fd: std.posix.fd_t = if (sock_path) |p|
-        try connectWithRetry(io, p)
-    else
-        std.Io.File.stdin().handle;
+        connectWithRetry(io, p) catch
+            fail(io, "no surveyor socket at '{s}' — start one with: surveyor serve --socket {s}", .{ p, p })
+    else if (stdin_feeds_frames)
+        std.Io.File.stdin().handle
+    else blk: {
+        spawned = spawnSurveyor(io) catch
+            fail(io, "could not start `surveyor serve` (is cartograph installed?) — " ++
+                "or pipe one in: surveyor serve | cartograph-gtk", .{});
+        break :blk spawned.?.stdout.?.handle;
+    };
     defer if (sock_path != null) cartograph.usock.close(fd);
     setNonBlocking(fd);
 

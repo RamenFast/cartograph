@@ -260,7 +260,7 @@ pub const GeoDb = struct {
         var pathbuf: [1024]u8 = undefined;
         const path = std.fmt.bufPrint(&pathbuf, "{s}/{s}", .{ dir, name }) catch return null;
         const raw = Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(256 * 1024 * 1024)) catch {
-            note(io, "geoip: {s} not loadable — owner/country stay unknown (fetch: scripts/fetch-geoip.sh)", .{path});
+            note(io, "geoip: {s} not loadable — owner/country stay unknown (fetch: cartograph-fetch-geoip)", .{path});
             return null;
         };
         out.* = mmdb.Mmdb.init(raw) catch {
