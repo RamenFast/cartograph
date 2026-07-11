@@ -30,6 +30,13 @@ h1 .glyph{color:var(--tool)}
 .stone-toggle{appearance:none;border:1px solid var(--line-strong);background:linear-gradient(160deg,var(--stone-hi),var(--stone) 42%,var(--stone-lo));color:var(--ink);font:600 11px var(--mono);letter-spacing:.08em;padding:8px 12px;cursor:pointer;box-shadow:inset 1px 1px 0 var(--stone-hi),inset -1px -1px 0 var(--stone-lo),inset 0 0 0 2px rgba(0,0,0,.03),0 2px 0 var(--stone-lo),0 3px 6px rgba(0,0,0,.22);transition:box-shadow .08s,transform .08s}
 .stone-toggle:active{transform:translateY(2px);box-shadow:inset 2px 2px 4px var(--stone-lo),inset -1px -1px 2px var(--stone-hi)}
 .stone-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0 4px}
+.stone-act{appearance:none;border:1px solid var(--line-strong);background:linear-gradient(160deg,var(--stone-hi),var(--stone) 42%,var(--stone-lo));color:var(--ink);font:600 11px var(--mono);letter-spacing:.08em;padding:9px 14px;cursor:pointer;box-shadow:inset 1px 1px 0 var(--stone-hi),inset -1px -1px 0 var(--stone-lo),0 2px 0 var(--stone-lo),0 3px 6px rgba(0,0,0,.22);transition:box-shadow .08s,transform .08s}
+.stone-act:active{transform:translateY(2px);box-shadow:inset 2px 2px 4px var(--stone-lo),inset -1px -1px 2px var(--stone-hi)}
+.stone-act:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.stone-act[disabled]{opacity:.55;cursor:wait}
+#act-out{display:none;background:var(--surface-2);border:1px solid var(--line);padding:10px 13px;margin-top:10px;font:12px/1.55 var(--mono);white-space:pre-wrap;max-height:300px;overflow:auto}
+#act-out.err{border-color:#cf4d4d}
 section{border:1px solid var(--line);background:var(--surface);padding:16px 20px;margin:14px 0}
 section h2{font:600 13px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--tool);margin:0 0 10px;border-bottom:1px solid var(--line);padding-bottom:8px}
 pre{background:var(--surface-2);border:1px solid var(--line);padding:12px 14px;overflow-x:auto;font:12.5px/1.55 var(--mono);margin:10px 0}
@@ -56,26 +63,37 @@ footer{margin-top:26px;color:var(--muted);font:11px var(--mono);letter-spacing:.
   <header class="post">
     <div class="crumbs">SymbolOS › Underground › <b>Network Observatory</b></div>
     <h1><span class="glyph">🛰</span> Cartograph</h1>
-    <p class="sub">A living map of the machine's network, orbit to byte. eBPF hybrid capture, GTK/TUI fronts —
-    and a native <span class="wl" data-pop="conv">station-convention</span> CLI the agents read. V1 shipped.</p>
+    <p class="sub">A living map of the machine's network, orbit to byte. eBPF hybrid capture, GTK/TUI fronts,
+    a shared session daemon any agent can steer — and a native <span class="wl" data-pop="conv">station-convention</span> CLI. V1 shipped.</p>
+    <div class="actions">
+      <button class="stone-act" data-act="cartograph/status" data-kind="json">☉ POSTURE NOW</button>
+      <button class="stone-act" data-act="cartograph/open" data-kind="spawn">▢ OPEN THE MAP</button>
+      <button class="stone-act" data-act="cartograph/focus-orbit" data-kind="json">⬙ FOCUS ORBIT</button>
+    </div>
+    <div id="act-out"></div>
   </header>
 
   <section>
     <h2>The signpost — what an agent runs</h2>
-    <pre><code># the posture one-liner: ONE JSON object — listeners, exposure badges, counts
+    <pre><code># the posture one-liner: ONE JSON envelope — capture mode, listeners, exposure badges, counts
 <span class="k">surveyor status</span> | jq
 
 # every flow, one JSON object per line (auto-NDJSON when piped)
 <span class="k">surveyor snapshot --json</span> | jq -c 'select(.pid != 0)'
 
-# the live watch: hello/flow/closed/tick events at 1 Hz
-<span class="k">surveyor serve --json</span> | jq -c 'select(.ev=="flow" and .fresh)'
+# the live watch: hello/posture/focus/flow/closed/tick events at 1 Hz
+<span class="k">surveyor serve --json</span> | jq -c 'select(.event=="flow" and .fresh)'
+
+# move the live session's shared cursor — the human's window follows
+<span class="k">surveyor ctl focus app firefox</span>
 
 # the whole machine-readable contract (a model with zero training learns the tool)
 <span class="k">surveyor --schema</span></code></pre>
     <p>Binary: <code>cartograph/zig-out/bin/surveyor</code>. Pretty tables appear on a TTY; JSON the moment
     stdout is a pipe — the <span class="wl" data-pop="isatty">isatty move</span>. GUI (<code>cartograph-gtk</code>) and
-    TUI (<code>cartograph</code>) render the same view-model; nothing can drift.</p>
+    TUI (<code>cartograph</code>) render the same view-model; nothing can drift. Opened with no arguments, the GUI
+    joins (or spawns) the box's <span class="wl" data-pop="daemon">session daemon</span>, so every window and every
+    agent share one capture core and one cursor.</p>
   </section>
 
   <section>
@@ -99,8 +117,8 @@ surveyor status | jq '.listeners[] | select(.comm=="llama-server")'</code></pre>
     <p>Before image generation, the orchestrator checks the card and this page's tool answers who's
     listening (<code>llama-server :8108</code>, bridge <code>:8109</code>, Hermes gateway). Risk badges are
     programmatic — anything unexpected talking shows up as a non-loopback listener with a name.</p>
-    <p>Docs of record: <code>docs/AGENT-INTERFACE.md</code> (the contract) · <code>docs/CLI.md</code> (verb grammar,
-    partly roadmap) · man page <code>cartograph(1)</code>.</p>
+    <p>Docs of record: <code>docs/AGENT-INTERFACE.md</code> (the contract) · man page <code>surveyor(1)</code>.
+    <code>docs/CLI.md</code> is design source, not reference — many of its verbs are roadmap.</p>
   </section>
 
   <footer>cartograph · form-station node · convention: NexusFormStationWork/CONVENTION.md ☂️</footer>
@@ -112,8 +130,9 @@ surveyor status | jq '.listeners[] | select(.comm=="llama-server")'</code></pre>
   t.onclick=function(){var i=(order.indexOf(root.dataset.theme||'')+1)%3;
     if(order[i])root.dataset.theme=order[i];else delete root.dataset.theme;};
   var POPS={
-    conv:{t:'The station convention',b:'Every local tool speaks JSON from a bash-callable CLI: one object for one-shots, NDJSON for streams, errors that name the fix, exit codes 0/2/3/4, strict schemas. Native, not MCP. The normative doc lives in NexusFormStationWork/CONVENTION.md — cartograph was its template.'},
+    conv:{t:'The station convention',b:'Every local tool speaks JSON from a bash-callable CLI: one enveloped object for one-shots, NDJSON for streams, errors that name the fix, exit codes 0/2/3, strict schemas. Native, not MCP. The normative doc lives in AGENT-CLI-STANDARD.md — cartograph was its template.'},
     isatty:{t:'The isatty move',b:'tcgetattr on stdout: a terminal gets the colored human table, a pipe gets NDJSON — no flag to remember. --json still forces structure when writing to a file. A real Unix program never makes you fight color codes in a pipeline.'},
+    daemon:{t:'The session daemon',b:'surveyor serve --socket runs one capture core for the whole box: binary frames for windows, duplex NDJSON for agents on the .json socket. All observers share one session cursor — surveyor ctl focus app firefox moves every window at once. With --exit-idle it leaves when the last observer does.'},
     badge:{t:'Risk badges',b:'Each listener carries its exposure as a hex badge color: green #87d787 loopback (only this box), amber #ffaf00 network (your LAN can reach it), red #ff5f5f internet (the world can reach it). Programmatic — an agent can alert on any non-loopback newcomer.'}
   };
   var open=[];
@@ -130,5 +149,41 @@ surveyor status | jq '.listeners[] | select(.comm=="llama-server")'</code></pre>
     if(!e.target.closest('.pop')){open.forEach(function(d){d.remove()});open=[];}
   });
   addEventListener('keydown',function(e){if(e.key==='Escape'){open.forEach(function(d){d.remove()});open=[];}});
+
+  // The buttons — house rule 7: essential CLI actions execute from the page.
+  // They speak to the loopback station-helper (:9123). If it's down, degrade
+  // gently: copy the equivalent command and say so — never a dead click.
+  var HELPER='http://127.0.0.1:9123/';
+  var CMDS={'cartograph/status':'surveyor status | jq',
+            'cartograph/open':'cartograph-gtk &',
+            'cartograph/focus-orbit':'surveyor ctl focus orbit'};
+  var out=document.getElementById('act-out');
+  function show(text,isErr){out.style.display='block';out.className=isErr?'err':'';out.textContent=text;}
+  document.querySelectorAll('.stone-act').forEach(function(b){
+    b.onclick=function(){
+      b.disabled=true;var act=b.dataset.act;
+      fetch(HELPER+act,{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+        b.disabled=false;
+        if(d.status!=='ok'){show('✗ '+(d.error||'failed')+(d.fix?'\nfix: '+d.fix:''),true);return;}
+        if(b.dataset.kind==='spawn'){show('✓ window opened (pid '+d.pid+') — it joins the shared session');return;}
+        var o=d.output;
+        if(act==='cartograph/status'&&o&&o.flows){
+          show('✓ '+o.capture.source+' capture · '+o.flows.total+' flows ('+o.flows.established+' estab, '+
+               o.flows.listeners+' listening) · exposure: '+o.exposure.loopback+' loopback / '+
+               o.exposure.network+' network / '+o.exposure.internet+' internet\n\n'+
+               JSON.stringify(o.listeners.filter(function(l){return l.exposure!=='loopback'}),null,1));
+        }else{
+          show('✓ '+(typeof o==='string'?o:JSON.stringify(o,null,1)||('done in '+d.elapsed_ms+'ms')));
+        }
+      }).catch(function(){
+        b.disabled=false;var cmd=CMDS[act]||act;
+        (navigator.clipboard?navigator.clipboard.writeText(cmd):Promise.reject()).then(function(){
+          show('helper (:9123) is down — copied to clipboard:\n  '+cmd+'\nstart it: systemctl --user start station-helper',true);
+        },function(){
+          show('helper (:9123) is down — run by hand:\n  '+cmd+'\nstart it: systemctl --user start station-helper',true);
+        });
+      });
+    };
+  });
 })();
 </script>

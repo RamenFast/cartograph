@@ -1,0 +1,35 @@
+name: ci
+
+# The regression gate the audit asked for (F26): every push builds all three
+# binaries (including the eBPF object and GTK frontend), runs the unit suite,
+# and then exercises the *shipped* surfaces end to end — contracts, exit codes,
+# the session daemon, the shared cursor, fd hygiene — via scripts/verify-e2e.sh.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps (GTK 4, clang, bpftool)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev clang llvm pkg-config \
+            linux-tools-common "linux-tools-$(uname -r)" || \
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev clang llvm pkg-config linux-tools-generic
+
+      - name: Fetch the pinned Zig toolchain (0.16.0)
+        run: |
+          mkdir -p toolchain
+          curl -fsSL https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz \
+            | tar -xJ -C toolchain
+
+      - name: End-to-end verification (build + unit tests + live surfaces)
+        run: ./scripts/verify-e2e.sh
