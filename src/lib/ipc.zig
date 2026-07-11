@@ -28,7 +28,10 @@ const FlowKey = flow.FlowKey;
 /// asn/as_org/country), appended as **trailing fields** — a v3 reader decodes their
 /// absence from a v2 frame as the zero values, so this bump is informative too.
 /// Bumped to 4 in V1/S2: ppid + pcomm ("what launched this?") appended the same way.
-pub const protocol_version: u16 = 4;
+/// Bumped to 5 in V1.1: the `posture` frame (capture-mode truth, audit F14) and the
+/// live shared-cursor broadcast (audit F4) — both additive; a v4 reader skips posture
+/// as an unknown frame and already decodes shared focus frames.
+pub const protocol_version: u16 = 5;
 
 /// Upper bound on a single encoded frame, so readers can size their buffer.
 pub const max_frame = 1024;
@@ -44,6 +47,7 @@ pub const FrameType = enum(u8) {
     rule = 7, // a Rule create/update (bidirectional)
     reading = 8, // a new Reading (observation only)
     ruling = 9, // a new Ruling (the renderer shows the severed link, D14)
+    posture = 10, // capture-mode truth (v5): which source/enrichers are actually live (F14)
     _,
 };
 
@@ -57,7 +61,43 @@ pub const Frame = union(enum) {
     rule: ontology.Rule,
     reading: ontology.Reading,
     ruling: ontology.Ruling,
+    posture: Posture,
     unknown: u8, // an unrecognised frame type we skipped over
+};
+
+/// Capture-mode truth (v5, audit F14): what the producer's capture stack is *actually*
+/// doing right now, so no renderer has to guess whether "everything" means polling-only.
+/// Degradation is data, not a stderr note a menu-launched GUI never sees.
+pub const Posture = struct {
+    /// The live capture source: unprivileged inet_diag polling, or the eBPF hybrid.
+    source: enum(u8) { diag = 0, hybrid = 1 } = .diag,
+    /// Passive-DNS tap attached (true hostnames, not just rDNS guesses).
+    pdns: bool = false,
+    /// Offline ASN db loaded (owner names).
+    geoip_asn: bool = false,
+    /// Offline country db loaded.
+    geoip_country: bool = false,
+
+    pub fn sourceLabel(p: Posture) []const u8 {
+        return switch (p.source) {
+            .diag => "polling",
+            .hybrid => "ebpf+polling",
+        };
+    }
+
+    /// The compact human line both frontends put in their headers (F14): capture
+    /// source, name fidelity, and geography — truth about what the view is built from.
+    pub fn describe(p: Posture, buf: []u8) []const u8 {
+        var w = std.Io.Writer.fixed(buf);
+        w.writeAll(p.sourceLabel()) catch {};
+        w.writeAll(if (p.pdns) " · dns" else " · rdns-only") catch {};
+        if (p.geoip_asn or p.geoip_country) {
+            w.writeAll(" · geoip") catch {};
+        } else {
+            w.writeAll(" · no-geoip") catch {};
+        }
+        return w.buffered();
+    }
 };
 
 // ---- low-level field helpers ------------------------------------------------
@@ -191,6 +231,26 @@ pub fn sendTick(w: *Writer, ms: i64) Writer.Error!void {
 
 pub fn sendBye(w: *Writer) Writer.Error!void {
     try sendFrame(w, .bye, &.{});
+}
+
+pub fn sendPosture(w: *Writer, p: Posture) Writer.Error!void {
+    var buf: [4]u8 = .{
+        @intFromEnum(p.source),
+        @intFromBool(p.pdns),
+        @intFromBool(p.geoip_asn),
+        @intFromBool(p.geoip_country),
+    };
+    try sendFrame(w, .posture, &buf);
+}
+
+fn readPosture(r: *Reader) !Posture {
+    const source_byte = try r.takeByte();
+    return .{
+        .source = if (source_byte == 1) .hybrid else .diag,
+        .pdns = (try r.takeByte()) != 0,
+        .geoip_asn = (try r.takeByte()) != 0,
+        .geoip_country = (try r.takeByte()) != 0,
+    };
 }
 
 // ---- act-ontology frames (D19/D20, ONTOLOGY.md) -----------------------------
@@ -433,6 +493,7 @@ pub fn readFrame(r: *Reader) !?Frame {
         .rule => .{ .rule = try readRule(&pr) },
         .reading => .{ .reading = try readReading(&pr) },
         .ruling => .{ .ruling = try readRuling(&pr) },
+        .posture => .{ .posture = try readPosture(&pr) },
         _ => .{ .unknown = body[0] },
     };
 }
@@ -772,6 +833,21 @@ test "FrameStream reassembles frames split and coalesced across reads" {
     std.mem.writeInt(u32, &big, max_frame + 1, .little);
     try s3.push(&big);
     try t.expectError(error.FrameTooLarge, s3.next());
+}
+
+test "posture frame round-trips (capture-mode truth, F14)" {
+    const t = std.testing;
+    var buf: [64]u8 = undefined;
+    var w = Writer.fixed(&buf);
+    try sendPosture(&w, .{ .source = .hybrid, .pdns = true, .geoip_asn = true, .geoip_country = false });
+    var r = Reader.fixed(w.buffered());
+    const f = (try readFrame(&r)).?;
+    try t.expect(f == .posture);
+    try t.expectEqual(@as(@TypeOf(f.posture.source), .hybrid), f.posture.source);
+    try t.expect(f.posture.pdns);
+    try t.expect(f.posture.geoip_asn);
+    try t.expect(!f.posture.geoip_country);
+    try t.expectEqualStrings("ebpf+polling", f.posture.sourceLabel());
 }
 
 test "unknown frames are skipped so the protocol grows additively" {

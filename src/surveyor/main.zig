@@ -2,10 +2,14 @@
 //!
 //!   surveyor snapshot   one-shot attributed flow table (human-readable)
 //!   surveyor serve      stream the live view-model as binary IPC frames to stdout
+//!   surveyor serve --socket <path>   the shared session daemon: ONE capture core,
+//!                       many simultaneous observers — binary frontends on <path>,
+//!                       NDJSON agents on <path>.json — all following one shared cursor
+//!   surveyor ctl        drive the live session from a shell/agent (focus …)
 //!
 //! `serve` is the (eventually privileged) producer a frontend consumes:
 //!   surveyor serve | cartograph --ipc
-//! The same frames will travel a Unix socket once surveyor runs as a setcap daemon.
+//! The same frames travel the Unix socket when surveyor runs as a setcap daemon.
 
 const std = @import("std");
 const cartograph = @import("cartograph");
@@ -30,11 +34,15 @@ pub fn main(init: std.process.Init) !void {
     _ = args.next(); // argv0
     const cmd = args.next() orelse "snapshot";
 
+    // `ctl` owns its own grammar (verb + positional args), so branch before the flag scan.
+    if (std.mem.eql(u8, cmd, "ctl")) return ctl(gpa, io, init.minimal.environ, &args);
+
     // Simple, agent-legible flag scan (order-independent). See docs/AGENT-INTERFACE.md.
     // Unknown flags are an error, not a shrug — a typo'd `--sockte` must never silently
     // run something else (consistent-behavior law).
     var as_json = false;
     var want_bpf = false;
+    var exit_idle = false;
     var sock_path: ?[]const u8 = null;
     var geoip_dir: ?[]const u8 = null;
     while (args.next()) |a| {
@@ -42,6 +50,8 @@ pub fn main(init: std.process.Init) !void {
             as_json = true;
         } else if (std.mem.eql(u8, a, "--bpf")) {
             want_bpf = true;
+        } else if (std.mem.eql(u8, a, "--exit-idle")) {
+            exit_idle = true;
         } else if (std.mem.eql(u8, a, "--socket")) {
             sock_path = args.next() orelse return fail(io, "--socket needs a path", .{});
         } else if (std.mem.eql(u8, a, "--geoip")) {
@@ -61,9 +71,23 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (std.mem.eql(u8, cmd, "serve")) {
-        if (as_json) {
-            if (sock_path) |p| try serveSocketJson(gpa, io, p, want_bpf, geoip_dir) else try serveJson(gpa, io, want_bpf, geoip_dir);
-        } else if (sock_path) |p| try serveSocket(gpa, io, p, want_bpf, geoip_dir) else try serve(gpa, io, want_bpf, geoip_dir);
+        if (sock_path) |p| {
+            // The shared session daemon (F5): one capture core, many observers. The
+            // binary frames live at <p>; the NDJSON agent surface lives at <p>.json —
+            // unless --json asked for NDJSON at exactly <p> (agents-only).
+            var jbuf: [128]u8 = undefined;
+            if (as_json) {
+                try daemon(gpa, io, null, p, want_bpf, geoip_dir, exit_idle);
+            } else {
+                const jp = std.fmt.bufPrint(&jbuf, "{s}.json", .{p}) catch
+                    return fail(io, "socket path too long for its .json twin", .{});
+                try daemon(gpa, io, p, jp, want_bpf, geoip_dir, exit_idle);
+            }
+        } else if (as_json) {
+            try serveJson(gpa, io, want_bpf, geoip_dir);
+        } else {
+            try serve(gpa, io, want_bpf, geoip_dir);
+        }
     } else if (std.mem.eql(u8, cmd, "snapshot")) {
         try snapshot(gpa, io, as_json, want_bpf, geoip_dir);
     } else if (std.mem.eql(u8, cmd, "status")) {
@@ -188,7 +212,7 @@ fn warnBpfFallback(io: std.Io, err: anyerror) void {
 }
 
 fn usage(io: std.Io, sink: enum { stdout, stderr }) !void {
-    var buf: [1024]u8 = undefined;
+    var buf: [2048]u8 = undefined;
     const file = switch (sink) {
         .stdout => std.Io.File.stdout(),
         .stderr => std.Io.File.stderr(),
@@ -199,18 +223,25 @@ fn usage(io: std.Io, sink: enum { stdout, stderr }) !void {
         \\surveyor — cartograph capture core
         \\
         \\usage:
-        \\  surveyor status                 one-shot posture: ONE JSON object — listeners,
-        \\                                  exposure/risk badges, flow counts (always JSON)
+        \\  surveyor status                 one-shot posture: ONE JSON object — capture mode,
+        \\                                  listeners, exposure/risk badges, flow counts
         \\  surveyor snapshot [--json]      one-shot attributed flow table
         \\                                  (auto-NDJSON when stdout is a pipe; force with --json)
         \\  surveyor serve                  stream live binary IPC frames to stdout (pipe to a frontend)
         \\  surveyor serve --json           stream the live view-model as NDJSON events
-        \\                                  (hello/flow/closed/tick lines — the agent's live watch)
-        \\  surveyor serve --socket <path>  serve frames over a Unix socket (the daemon boundary)
+        \\                                  (hello/posture/flow/closed/tick lines — the agent's live watch)
+        \\  surveyor serve --socket <path>  the shared session daemon: many simultaneous observers —
+        \\                                  binary frontends on <path>, NDJSON duplex agents on <path>.json
+        \\                                  (--json: NDJSON directly on <path>; --exit-idle: quit when
+        \\                                  the last observer disconnects)
+        \\  surveyor ctl <verb> [args…]     drive the live session (default socket, or --socket <path>):
+        \\    ctl focus orbit                       back to the whole machine
+        \\    ctl focus flow <proto> <l> <lp> <r> <rp> [street|ground]
+        \\    ctl focus app <comm> · ctl focus asn <n> · ctl focus host <addr>
         \\  surveyor --schema               print the machine-readable contract of every surface
         \\  surveyor --version              print the version and exit
         \\
-        \\flags: --bpf (use the eBPF source if caps allow)  --socket <path>  --json
+        \\flags: --bpf (use the eBPF source if caps allow)  --socket <path>  --json  --exit-idle
         \\       --geoip <dir> (ASN+country mmdb dir; default ~/.local/share/cartograph/geoip —
         \\                      populate it once with cartograph-fetch-geoip)
         \\
@@ -325,9 +356,9 @@ fn snapshot(gpa: std.mem.Allocator, io: std.Io, as_json: bool, want_bpf: bool, g
 }
 
 /// `surveyor status` — the box's posture as ONE JSON object (the station convention's
-/// one-shot shape; the Nexus ask). Listener inventory + exposure/risk badges + flow
-/// counts. Always JSON — a summary is data, there is no table twin. No rDNS wait:
-/// listeners are local truth, names don't gate the answer.
+/// one-shot shape; the Nexus ask). Capture-mode truth (F14) + listener inventory +
+/// exposure/risk badges + flow counts. Always JSON — a summary is data, there is no
+/// table twin. No rDNS wait: listeners are local truth, names don't gate the answer.
 fn status(gpa: std.mem.Allocator, io: std.Io, want_bpf: bool, geoip_dir: ?[]const u8) !void {
     var src = try openSource(gpa, io, want_bpf);
     defer src.deinit();
@@ -335,6 +366,8 @@ fn status(gpa: std.mem.Allocator, io: std.Io, want_bpf: bool, geoip_dir: ?[]cons
     defer table.deinit();
     var enricher = capture.enrich.Enricher.init(gpa, io, geoip_dir);
     defer enricher.deinit();
+    var pdns = openPdns(io, &src);
+    defer if (pdns) |*p| p.deinit();
 
     var closed: std.ArrayList(cartograph.FlowKey) = .empty;
     defer closed.deinit(gpa);
@@ -348,7 +381,7 @@ fn status(gpa: std.mem.Allocator, io: std.Io, want_bpf: bool, geoip_dir: ?[]cons
     var buf: [128 * 1024]u8 = undefined;
     var fw = std.Io.File.stdout().writer(io, &buf);
     const w = &fw.interface;
-    try cartograph.json.writeStatus(w, flows, now);
+    try cartograph.json.writeStatus(w, flows, now, derivePosture(&src, pdns != null, &enricher));
     try w.writeByte('\n');
     try w.flush();
 }
@@ -376,23 +409,11 @@ fn remoteStr(f: *cartograph.Flow, buf: []u8) []const u8 {
     return cartograph.endpoint(buf, f.key.remote, f.key.remote_port);
 }
 
-/// Poll one fd for readability with a millisecond timeout (the daemon's half of the
-/// frontend↔surveyor full-duplex link — we write flows *and* read upstream user_state on
-/// the same socket). Mirrors the TUI's `term.pollIn`, kept local so surveyor doesn't
-/// depend on the TUI module.
-fn pollReadable(fd: std.posix.fd_t, timeout_ms: i32) bool {
-    var fds = [_]std.os.linux.pollfd{.{ .fd = fd, .events = std.os.linux.POLL.IN, .revents = 0 }};
-    const rc = std.os.linux.poll(&fds, 1, timeout_ms);
-    if (std.os.linux.errno(rc) != .SUCCESS) return false;
-    return fds[0].revents & std.os.linux.POLL.IN != 0;
-}
-
 /// Send the *authoritative* view-local session to a client as the minimal set of
 /// `user_state` frames that reconstruct it: the `.profile` base, then a `.lens_toggle`
 /// only for lenses that deviate from that profile's default. A connecting frontend thus
 /// **inherits** surveyor's session instead of guessing — truth flows from one owner
-/// (DECISIONS D22, the Seam-C anti-fork). Today every connection starts `.calm`; when
-/// persisted greetings land (M3) this same channel carries them down on connect.
+/// (DECISIONS D22, the Seam-C anti-fork).
 fn sendSession(w: *std.Io.Writer, s: cartograph.SessionState) !void {
     try ipc.sendUserState(w, .{ .profile = s.profile });
     inline for (std.enums.values(cartograph.lens.Lens)) |l| {
@@ -404,60 +425,252 @@ fn sendSession(w: *std.Io.Writer, s: cartograph.SessionState) !void {
     if (!s.focus.eql(.{})) try ipc.sendUserState(w, .{ .focus = s.focus });
 }
 
-/// The upstream (frontend → surveyor) half of a client connection: the per-connection,
-/// view-local `SessionState` (D22) plus the byte accumulator that reassembles the
-/// `user_state` frames a frontend sends (profile switch, lens toggle). Greeting/Rule
-/// frames are *shared truth* bound for surveyor's persisted store (M3); they are
-/// recognised here and left for that store, never silently misapplied as view state.
-const ClientLink = struct {
-    fd: std.posix.fd_t,
-    frames: ipc.FrameStream,
+// ---- the shared session daemon (audit F5: one capture core, many observers) --------
+
+/// One connected observer — a binary frontend (GTK/TUI) or an NDJSON agent. Both watch
+/// the same capture core and the same shared cursor; only the rendering differs.
+const Observer = struct {
+    fd: i32,
+    kind: enum { binary, ndjson },
+    /// This observer's view-local session (profile/lens — D22) plus the cursor it holds.
     session: cartograph.SessionState = .{},
+    /// Upstream reassembly: binary frames from a frontend…
+    frames: ipc.FrameStream,
+    /// …or JSON command lines from an agent.
+    inbuf: std.ArrayList(u8) = .empty,
+    wbuf: []u8,
+    out: std.Io.File.Writer,
+    dead: bool = false,
 
-    fn init(gpa: std.mem.Allocator, fd: std.posix.fd_t) ClientLink {
-        return .{ .fd = fd, .frames = ipc.FrameStream.init(gpa) };
-    }
-
-    fn deinit(self: *ClientLink) void {
-        self.frames.deinit();
-    }
-
-    /// Read whatever the frontend just sent (the fd is already poll-ready), fold any
-    /// view-local `user_state` change into the session, and report whether it changed
-    /// (so the caller echoes the new authoritative session back). `error.Closed` =
-    /// the frontend hung up.
-    fn pump(self: *ClientLink) !bool {
-        var rbuf: [16 * 1024]u8 = undefined;
-        const rc = std.os.linux.read(self.fd, &rbuf, rbuf.len);
-        switch (std.os.linux.errno(rc)) {
-            .SUCCESS => {},
-            .AGAIN => return false,
-            else => return error.Closed,
-        }
-        if (rc == 0) return error.Closed; // EOF: frontend gone
-        try self.frames.push(rbuf[0..rc]);
-
-        var changed = false;
-        while (try self.frames.next()) |frame| switch (frame) {
-            .user_state => |us| if (self.session.apply(us)) {
-                changed = true;
-            },
-            else => {}, // greeting/rule → shared store (M3); hello/flow_* never travel upstream
+    fn create(gpa: std.mem.Allocator, io: std.Io, fd: i32, kind: @FieldType(Observer, "kind")) !*Observer {
+        const ob = try gpa.create(Observer);
+        errdefer gpa.destroy(ob);
+        const wbuf = try gpa.alloc(u8, 128 * 1024);
+        errdefer gpa.free(wbuf);
+        const file: std.Io.File = .{ .handle = fd, .flags = .{ .nonblocking = false } };
+        ob.* = .{
+            .fd = fd,
+            .kind = kind,
+            .frames = ipc.FrameStream.init(gpa),
+            .wbuf = wbuf,
+            .out = file.writer(io, wbuf),
         };
-        return changed;
+        return ob;
+    }
+
+    fn destroy(ob: *Observer, gpa: std.mem.Allocator) void {
+        cartograph.usock.close(ob.fd); // F20: every accepted fd is closed exactly once
+        ob.frames.deinit();
+        ob.inbuf.deinit(gpa);
+        gpa.free(ob.wbuf);
+        gpa.destroy(ob);
+    }
+
+    fn w(ob: *Observer) *std.Io.Writer {
+        return &ob.out.interface;
     }
 };
 
-/// The capture→emit loop, writing IPC frames to `w` forever. Returns when the writer
-/// errors (the consumer hung up) or capture fails. Transport-agnostic by construction:
-/// `w` is a pipe (stdout) or an accepted Unix socket — the frames are byte-identical,
-/// so a frontend renders the same view-model either way (parity, proven in tests).
-///
-/// `in_fd` is the readable half of a *full-duplex* client socket: when present, the loop
-/// also drains upstream `user_state` frames and echoes the authoritative session back
-/// (the bidirectional Seam-C path, D22). A pipe (`serve` to stdout) has no upstream, so
-/// `in_fd` is null and the loop just paces the 1 Hz capture.
-fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, in_fd: ?std.posix.fd_t, want_bpf: bool, geoip_dir: ?[]const u8) !void {
+/// The daemon's whole mutable state, so the per-event handlers stay small.
+const Daemon = struct {
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    observers: std.ArrayList(*Observer) = .empty,
+    shared: cartograph.atlas.SharedSession = .{},
+    posture: ipc.Posture,
+
+    fn deinit(d: *Daemon) void {
+        for (d.observers.items) |ob| ob.destroy(d.gpa);
+        d.observers.deinit(d.gpa);
+    }
+
+    /// Greet a just-accepted observer with everything it needs to render truthfully:
+    /// protocol hello, capture posture (F14), its inherited session, and the shared
+    /// cursor if one is set (D24 inherit-on-connect).
+    fn welcome(d: *Daemon, ob: *Observer) !void {
+        if (d.shared.worthAnnouncing()) ob.session.focus = d.shared.focus;
+        switch (ob.kind) {
+            .binary => {
+                try ipc.sendHello(ob.w());
+                try ipc.sendPosture(ob.w(), d.posture);
+                try sendSession(ob.w(), ob.session);
+            },
+            .ndjson => {
+                const J = cartograph.json;
+                try J.writeHelloEvent(ob.w(), ipc.protocol_version);
+                try ob.w().writeByte('\n');
+                try J.writePostureEvent(ob.w(), d.posture);
+                try ob.w().writeByte('\n');
+                try J.writeFocusEvent(ob.w(), ob.session.focus);
+                try ob.w().writeByte('\n');
+            },
+        }
+        try ob.w().flush();
+    }
+
+    /// The shared cursor moved (a human clicked a row, or an agent sent `ctl focus`):
+    /// tell *every* observer, each in its own tongue. This is F4 — the broadcast that
+    /// makes co-observation real. Write failures mark the observer dead; the sweep reaps.
+    fn broadcastFocus(d: *Daemon) void {
+        for (d.observers.items) |ob| {
+            if (ob.dead) continue;
+            _ = ob.session.apply(.{ .focus = d.shared.focus });
+            const res = switch (ob.kind) {
+                .binary => blk: {
+                    ipc.sendUserState(ob.w(), .{ .focus = d.shared.focus }) catch |e| break :blk e;
+                    break :blk ob.w().flush();
+                },
+                .ndjson => blk: {
+                    cartograph.json.writeFocusEvent(ob.w(), d.shared.focus) catch |e| break :blk e;
+                    ob.w().writeByte('\n') catch |e| break :blk e;
+                    break :blk ob.w().flush();
+                },
+            };
+            res catch {
+                ob.dead = true;
+            };
+        }
+    }
+
+    /// Route one upstream act from a binary frontend (atlas.route — the one routing
+    /// decision). Returns true if this observer's own session changed (echo it back).
+    fn routeUserState(d: *Daemon, ob: *Observer, us: cartograph.ontology.UserState) bool {
+        switch (cartograph.atlas.route(us)) {
+            .view_local => return ob.session.apply(us),
+            .shared => {
+                if (d.shared.applyFocus(us.focus)) d.broadcastFocus();
+                return false; // the broadcast already reached this observer
+            },
+            .store => return false, // persisted shared truth — the M3 store's seam
+        }
+    }
+
+    /// Drain a readable binary frontend. `error.Closed` = it hung up.
+    fn pumpBinary(d: *Daemon, ob: *Observer) !void {
+        var rbuf: [16 * 1024]u8 = undefined;
+        const rc = std.os.linux.read(ob.fd, &rbuf, rbuf.len);
+        switch (std.os.linux.errno(rc)) {
+            .SUCCESS => {},
+            .AGAIN => return,
+            else => return error.Closed,
+        }
+        if (rc == 0) return error.Closed;
+        try ob.frames.push(rbuf[0..rc]);
+
+        var changed = false;
+        while (try ob.frames.next()) |frame| switch (frame) {
+            .user_state => |us| {
+                if (d.routeUserState(ob, us)) changed = true;
+            },
+            else => {}, // greeting/rule → shared store (M3); hello/flow_* never travel upstream
+        };
+        if (changed) {
+            try sendSession(ob.w(), ob.session); // echo the authoritative session
+            try ob.w().flush();
+        }
+    }
+
+    /// Drain a readable NDJSON agent: JSON command lines in, ack/error lines out (F3).
+    fn pumpNdjson(d: *Daemon, ob: *Observer) !void {
+        var rbuf: [16 * 1024]u8 = undefined;
+        const rc = std.os.linux.read(ob.fd, &rbuf, rbuf.len);
+        switch (std.os.linux.errno(rc)) {
+            .SUCCESS => {},
+            .AGAIN => return,
+            else => return error.Closed,
+        }
+        if (rc == 0) return error.Closed;
+        try ob.inbuf.appendSlice(d.gpa, rbuf[0..rc]);
+        if (ob.inbuf.items.len > 64 * 1024) return error.Closed; // a "line" that never ends is not a client
+
+        const J = cartograph.json;
+        while (std.mem.indexOfScalar(u8, ob.inbuf.items, '\n')) |nl| {
+            const line = std.mem.trim(u8, ob.inbuf.items[0..nl], " \t\r");
+            if (line.len > 0) {
+                switch (cartograph.agentcmd.parse(d.gpa, line)) {
+                    .command => |cmd| switch (cmd) {
+                        .watch => try J.writeAckEvent(ob.w(), "watch"),
+                        .focus => |f| {
+                            try J.writeAckEvent(ob.w(), "focus");
+                            if (d.shared.applyFocus(f)) {
+                                try ob.w().writeByte('\n');
+                                try ob.w().flush();
+                                d.broadcastFocus();
+                                std.mem.copyForwards(u8, ob.inbuf.items, ob.inbuf.items[nl + 1 ..]);
+                                ob.inbuf.shrinkRetainingCapacity(ob.inbuf.items.len - (nl + 1));
+                                continue;
+                            }
+                        },
+                    },
+                    .err => |e| try J.writeErrorEvent(ob.w(), e.msg, e.fix),
+                }
+                try ob.w().writeByte('\n');
+                try ob.w().flush();
+            }
+            std.mem.copyForwards(u8, ob.inbuf.items, ob.inbuf.items[nl + 1 ..]);
+            ob.inbuf.shrinkRetainingCapacity(ob.inbuf.items.len - (nl + 1));
+        }
+    }
+
+    /// Send this tick's truth to every observer, each in its own tongue.
+    fn emitTick(d: *Daemon, flows: []const *cartograph.Flow, closed: []const cartograph.FlowKey, now: i64) void {
+        const J = cartograph.json;
+        for (d.observers.items) |ob| {
+            if (ob.dead) continue;
+            const res: anyerror!void = switch (ob.kind) {
+                .binary => blk: {
+                    for (flows) |f| ipc.sendFlowUpsert(ob.w(), f.*) catch |e| break :blk e;
+                    for (closed) |k| ipc.sendFlowClosed(ob.w(), k) catch |e| break :blk e;
+                    ipc.sendTick(ob.w(), now) catch |e| break :blk e;
+                    break :blk ob.w().flush();
+                },
+                .ndjson => blk: {
+                    for (flows) |f| {
+                        J.writeFlowEvent(ob.w(), f) catch |e| break :blk e;
+                        ob.w().writeByte('\n') catch |e| break :blk e;
+                    }
+                    for (closed) |k| {
+                        J.writeClosedEvent(ob.w(), k) catch |e| break :blk e;
+                        ob.w().writeByte('\n') catch |e| break :blk e;
+                    }
+                    J.writeTickEvent(ob.w(), now, flows.len) catch |e| break :blk e;
+                    ob.w().writeByte('\n') catch |e| break :blk e;
+                    break :blk ob.w().flush();
+                },
+            };
+            res catch {
+                ob.dead = true;
+            };
+        }
+    }
+
+    /// Reap dead observers — the F20 fix made structural: removal is the *only* place
+    /// an observer is destroyed, and destroy() is the only place its fd closes.
+    fn sweep(d: *Daemon) void {
+        var i: usize = 0;
+        while (i < d.observers.items.len) {
+            if (d.observers.items[i].dead) {
+                d.observers.swapRemove(i).destroy(d.gpa);
+            } else i += 1;
+        }
+    }
+};
+
+/// `surveyor serve --socket <path>` — the shared session daemon (audit F5). ONE capture
+/// core — one source, one FlowTable, one enricher — fanned out to every simultaneous
+/// observer: binary frontends on `bin_path`, NDJSON agents (and `surveyor ctl`) on
+/// `json_path`. All of them hold the same shared cursor; any of them can move it.
+/// `exit_idle` ends the daemon when its last observer disconnects (the GUI-spawned
+/// private daemon must not outlive the window that spawned it).
+fn daemon(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    bin_path: ?[]const u8,
+    json_path: []const u8,
+    want_bpf: bool,
+    geoip_dir: ?[]const u8,
+    exit_idle: bool,
+) !void {
     var src = try openSource(gpa, io, want_bpf);
     defer src.deinit();
     var table = cartograph.FlowTable.init(gpa);
@@ -467,11 +680,142 @@ fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, in_fd: ?std
     var pdns = openPdns(io, &src);
     defer if (pdns) |*p| p.deinit();
 
-    var link: ?ClientLink = if (in_fd) |fd| ClientLink.init(gpa, fd) else null;
-    defer if (link) |*l| l.deinit();
+    const bin_lfd: ?i32 = if (bin_path) |p| try cartograph.usock.listen(p) else null;
+    defer if (bin_lfd) |fd| cartograph.usock.close(fd);
+    const json_lfd = try cartograph.usock.listen(json_path);
+    defer cartograph.usock.close(json_lfd);
+    if (bin_lfd) |fd| cartograph.usock.setNonblocking(fd);
+    cartograph.usock.setNonblocking(json_lfd);
+
+    var d = Daemon{ .gpa = gpa, .io = io, .posture = derivePosture(&src, pdns != null, &enricher) };
+    defer d.deinit();
+
+    {
+        var ebuf: [512]u8 = undefined;
+        var ew = std.Io.File.stderr().writer(io, &ebuf);
+        var pbuf: [64]u8 = undefined;
+        if (bin_path) |p| {
+            try ew.interface.print("{s}surveyor{s} session daemon [{s}]\n  frontends: cartograph --socket {s}   (binary frames)\n  agents:    surveyor ctl --socket {s} …  or connect {s} (NDJSON duplex)\n", .{
+                BOLD, RST, d.posture.describe(&pbuf), p, p, json_path,
+            });
+        } else {
+            try ew.interface.print("{s}surveyor{s} session daemon [{s}]\n  agents: connect {s} (NDJSON duplex)\n", .{ BOLD, RST, d.posture.describe(&pbuf), json_path });
+        }
+        try ew.interface.flush();
+    }
+
+    var closed: std.ArrayList(cartograph.FlowKey) = .empty;
+    defer closed.deinit(gpa);
+    var pfds: std.ArrayList(std.os.linux.pollfd) = .empty;
+    defer pfds.deinit(gpa);
+
+    var had_observer = false;
+    var next_tick = capture.nowMs(io); // fire the first capture immediately
+    while (true) {
+        // ---- capture + fan out, once per second -------------------------------
+        const now = capture.nowMs(io);
+        if (now >= next_tick) {
+            closed.clearRetainingCapacity();
+            try src.tick(&table, now, &closed);
+            if (pdns) |*p| p.poll(&enricher, now);
+            const flows = try table.snapshot(gpa);
+            defer gpa.free(flows);
+            enricher.decorate(flows, now);
+            d.emitTick(flows, closed.items, now);
+            next_tick = now + 1000;
+        }
+
+        d.sweep();
+        if (d.observers.items.len > 0) had_observer = true;
+        if (exit_idle and had_observer and d.observers.items.len == 0) return; // the window closed
+
+        // ---- wait for: a new connection, upstream bytes, or the next tick -----
+        pfds.clearRetainingCapacity();
+        const IN = std.os.linux.POLL.IN;
+        if (bin_lfd) |fd| try pfds.append(gpa, .{ .fd = fd, .events = IN, .revents = 0 });
+        try pfds.append(gpa, .{ .fd = json_lfd, .events = IN, .revents = 0 });
+        const fixed = pfds.items.len;
+        for (d.observers.items) |ob| try pfds.append(gpa, .{ .fd = ob.fd, .events = IN, .revents = 0 });
+
+        const remaining: i32 = @intCast(@max(0, @min(1000, next_tick - capture.nowMs(io))));
+        const prc = std.os.linux.poll(pfds.items.ptr, @intCast(pfds.items.len), remaining);
+        if (std.os.linux.errno(prc) != .SUCCESS or prc == 0) continue;
+
+        // new observers (drain each ready listener fully — poll is level-triggered)
+        var pi: usize = 0;
+        if (bin_lfd != null) {
+            if (pfds.items[pi].revents & IN != 0) acceptAll(&d, bin_lfd.?, .binary);
+            pi += 1;
+        }
+        if (pfds.items[pi].revents & IN != 0) acceptAll(&d, json_lfd, .ndjson);
+
+        // upstream bytes from existing observers (the observer list is append-only
+        // within one iteration, and sweep() runs before the next poll builds)
+        for (pfds.items[fixed..], 0..) |pfd, oi| {
+            if (pfd.revents == 0) continue;
+            const ob = d.observers.items[oi];
+            const res = switch (ob.kind) {
+                .binary => d.pumpBinary(ob),
+                .ndjson => d.pumpNdjson(ob),
+            };
+            res catch {
+                ob.dead = true;
+            };
+        }
+    }
+}
+
+/// Accept every pending connection on a ready listener; failures (a raced-away client,
+/// a non-owner peer) skip that connection, never kill the daemon.
+fn acceptAll(d: *Daemon, lfd: i32, kind: @FieldType(Observer, "kind")) void {
+    while (true) {
+        const maybe = cartograph.usock.acceptNonblocking(lfd) catch return;
+        const cfd = maybe orelse return;
+        const ob = Observer.create(d.gpa, d.io, cfd, kind) catch {
+            cartograph.usock.close(cfd);
+            return;
+        };
+        d.welcome(ob) catch {
+            ob.destroy(d.gpa);
+            return;
+        };
+        d.observers.append(d.gpa, ob) catch {
+            ob.destroy(d.gpa);
+            return;
+        };
+    }
+}
+
+/// What the capture stack is *actually* doing (F14) — derived from the live objects,
+/// so it can never drift from the truth it describes.
+fn derivePosture(src: *Source, pdns_live: bool, enricher: *capture.enrich.Enricher) ipc.Posture {
+    return .{
+        .source = switch (src.*) {
+            .diag => .diag,
+            .hybrid => .hybrid,
+        },
+        .pdns = pdns_live,
+        .geoip_asn = enricher.geo.asn != null,
+        .geoip_country = enricher.geo.country != null,
+    };
+}
+
+/// The capture→emit loop for the one-way pipe (`surveyor serve | …`), writing IPC
+/// frames to stdout forever. Returns when the consumer hangs up or capture fails.
+/// The socket path uses `daemon` instead — same frames, many observers.
+fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, want_bpf: bool, geoip_dir: ?[]const u8) !void {
+    var src = try openSource(gpa, io, want_bpf);
+    defer src.deinit();
+    var table = cartograph.FlowTable.init(gpa);
+    defer table.deinit();
+    var enricher = capture.enrich.Enricher.init(gpa, io, geoip_dir);
+    defer enricher.deinit();
+    var pdns = openPdns(io, &src);
+    defer if (pdns) |*p| p.deinit();
 
     try ipc.sendHello(w);
-    if (link) |*l| try sendSession(w, l.session); // inherit-on-connect (D22)
+    try ipc.sendPosture(w, derivePosture(&src, pdns != null, &enricher)); // capture-mode truth (F14)
+    try sendSession(w, .{});
     try w.flush();
 
     var closed: std.ArrayList(cartograph.FlowKey) = .empty;
@@ -495,64 +839,25 @@ fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, in_fd: ?std
             try w.flush();
             next_tick = now + 1000;
         }
-
-        // Wait out the rest of the tick — but stay responsive to upstream toggles.
-        const remaining: i32 = @intCast(@max(0, @min(1000, next_tick - capture.nowMs(io))));
-        if (link) |*l| {
-            if (pollReadable(l.fd, remaining)) {
-                const changed = l.pump() catch |e| switch (e) {
-                    error.Closed => return, // frontend hung up; serveSocket waits for the next
-                    else => return e,
-                };
-                if (changed) {
-                    try sendSession(w, l.session); // echo authoritative state
-                    try w.flush();
-                }
-            }
-        } else {
-            try io.sleep(std.Io.Duration.fromMilliseconds(@intCast(remaining)), .awake);
-        }
+        const remaining: i64 = @max(0, @min(1000, next_tick - capture.nowMs(io)));
+        try io.sleep(std.Io.Duration.fromMilliseconds(@intCast(remaining)), .awake);
     }
 }
 
 /// `surveyor serve` — frames to stdout: the pipe path, `surveyor serve | cartograph --ipc`.
-/// A pipe is one-way, so there is no upstream `user_state` channel here (in_fd = null).
+/// A pipe is one-way, so there is no upstream `user_state` channel here.
 fn serve(gpa: std.mem.Allocator, io: std.Io, want_bpf: bool, geoip_dir: ?[]const u8) !void {
     var buf: [256 * 1024]u8 = undefined;
     var fw = std.Io.File.stdout().writer(io, &buf);
-    streamLoop(gpa, io, &fw.interface, null, want_bpf, geoip_dir) catch |err| return exitIfHangup(err);
-}
-
-/// `surveyor serve --socket <path>` — the real privilege boundary. Bind a Unix socket
-/// and serve each connecting (unprivileged) frontend the same frames. `setcap` raises
-/// *this* process's capabilities (M2 eBPF); the frontend across the socket never does.
-fn serveSocket(gpa: std.mem.Allocator, io: std.Io, path: []const u8, want_bpf: bool, geoip_dir: ?[]const u8) !void {
-    const lfd = try cartograph.usock.listen(path);
-    defer cartograph.usock.close(lfd);
-
-    var ebuf: [256]u8 = undefined;
-    var ew = std.Io.File.stderr().writer(io, &ebuf);
-    try ew.interface.print("{s}surveyor{s} serving IPC on unix:{s}  —  connect: cartograph --ipc --socket {s}\n", .{ BOLD, RST, path, path });
-    try ew.interface.flush();
-
-    while (true) {
-        const cfd = cartograph.usock.accept(lfd) catch continue;
-        defer cartograph.usock.close(cfd);
-        var buf: [256 * 1024]u8 = undefined;
-        var cf: std.Io.File = .{ .handle = cfd, .flags = .{ .nonblocking = false } };
-        var fw = cf.writer(io, &buf);
-        // The socket is full-duplex: we write flows down it and read upstream user_state
-        // (profile/lens toggles) back up it (D22). A client that hangs up surfaces as a
-        // write error or `error.Closed`; either way, just wait for the next.
-        streamLoop(gpa, io, &fw.interface, cfd, want_bpf, geoip_dir) catch {};
-    }
+    streamLoop(gpa, io, &fw.interface, want_bpf, geoip_dir) catch |err| return exitIfHangup(err);
 }
 
 /// The NDJSON event loop — the text twin of `streamLoop`'s binary frames (AGENT-INTERFACE
 /// §"serve --json"). Same view-model, same 1 Hz cadence, emitted as one self-identifying
 /// JSON object per line so an agent watches the *exact same live truth* the GUI renders —
 /// `surveyor serve --json | jq -c 'select(.ev=="flow" and .fresh)'` — instead of re-polling
-/// `snapshot`. Read-only: a watching agent has no upstream channel, so there is no duplex.
+/// `snapshot`. Read-only: stdout is one-way; the duplex agent surface is the daemon's
+/// `.json` socket (`serve --socket` / `surveyor ctl`).
 fn streamLoopJson(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, want_bpf: bool, geoip_dir: ?[]const u8) !void {
     var src = try openSource(gpa, io, want_bpf);
     defer src.deinit();
@@ -566,9 +871,10 @@ fn streamLoopJson(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, want_bp
 
     try J.writeHelloEvent(w, ipc.protocol_version);
     try w.writeByte('\n');
+    try J.writePostureEvent(w, derivePosture(&src, pdns != null, &enricher)); // capture-mode truth (F14)
+    try w.writeByte('\n');
     // Inherit-on-connect: tell the agent the starting cursor (focus, R1), the same way the
-    // binary path sends the session. Read-only today — focus moves once the duplex command
-    // channel lands (RESEARCH R3); shipping the event shape now keeps that work additive.
+    // binary path sends the session.
     try J.writeFocusEvent(w, cartograph.Focus{});
     try w.writeByte('\n');
     try w.flush();
@@ -623,21 +929,6 @@ fn exitIfHangup(err: anyerror) anyerror!void {
     };
 }
 
-/// `surveyor serve --json --socket <path>` — the same NDJSON stream over a Unix socket, so a
-/// remote/headless agent watches the live box exactly as `serve --json | jq` does locally.
-fn serveSocketJson(gpa: std.mem.Allocator, io: std.Io, path: []const u8, want_bpf: bool, geoip_dir: ?[]const u8) !void {
-    const lfd = try cartograph.usock.listen(path);
-    defer cartograph.usock.close(lfd);
-    while (true) {
-        const cfd = cartograph.usock.accept(lfd) catch continue;
-        defer cartograph.usock.close(cfd);
-        var buf: [256 * 1024]u8 = undefined;
-        var cf: std.Io.File = .{ .handle = cfd, .flags = .{ .nonblocking = false } };
-        var fw = cf.writer(io, &buf);
-        streamLoopJson(gpa, io, &fw.interface, want_bpf, geoip_dir) catch {};
-    }
-}
-
 /// `surveyor --schema` — the self-describing contract (D18, "no AI left out"). A model that
 /// has never seen Cartograph runs this once and learns every field, event, and vocabulary.
 fn printSchema(io: std.Io) !void {
@@ -647,4 +938,176 @@ fn printSchema(io: std.Io) !void {
     try cartograph.json.writeSchema(w);
     try w.writeByte('\n');
     try w.flush();
+}
+
+// ---- `surveyor ctl` — the agent's hands (audit F3) ---------------------------------
+
+/// `surveyor ctl <verb> [args…] [--socket <path>]` — drive the live session from a
+/// shell or an agent. Connects to the daemon's NDJSON socket, sends one command line
+/// (built by the same `agentcmd` codec the daemon parses — no drift possible), prints
+/// the daemon's ack/error line, and exits 0/2/3 accordingly. The default socket is the
+/// box's well-known session rendezvous, so `surveyor ctl focus app firefox` just works
+/// next to a double-clicked GUI.
+fn ctl(gpa: std.mem.Allocator, io: std.Io, environ: std.process.Environ, args: *std.process.Args.Iterator) !void {
+    _ = gpa;
+    var verb: ?[]const u8 = null;
+    var pos: [8][]const u8 = undefined;
+    var npos: usize = 0;
+    var sock_path: ?[]const u8 = null;
+    while (args.next()) |a| {
+        if (std.mem.eql(u8, a, "--socket")) {
+            sock_path = args.next() orelse return failUsage(io, "--socket needs a path", .{});
+        } else if (std.mem.startsWith(u8, a, "--")) {
+            return failUsage(io, "unknown flag '{s}' — see `surveyor --help`", .{a});
+        } else if (verb == null) {
+            verb = a;
+        } else if (npos < pos.len) {
+            pos[npos] = a;
+            npos += 1;
+        } else return failUsage(io, "too many arguments — see `surveyor --help`", .{});
+    }
+    const v = verb orelse return failUsage(io, "ctl needs a verb — try: surveyor ctl focus orbit", .{});
+
+    // Build the focus from the shell grammar. Same targets as the JSON command surface.
+    var focus: cartograph.Focus = undefined;
+    if (std.mem.eql(u8, v, "focus")) {
+        focus = parseCtlFocus(io, pos[0..npos]);
+    } else {
+        return failUsage(io, "unknown ctl verb '{s}' — supported: focus", .{v});
+    }
+
+    // The daemon's NDJSON socket: --socket as given, else its .json twin, else the
+    // well-known default (where the double-clicked GUI hosts its session).
+    var pbuf: [128]u8 = undefined;
+    var jbuf: [136]u8 = undefined;
+    const path: []const u8 = blk: {
+        if (sock_path) |p| {
+            // accept either the binary path (append .json) or the .json path directly
+            if (std.mem.endsWith(u8, p, ".json")) break :blk p;
+            const twin = std.fmt.bufPrint(&jbuf, "{s}.json", .{p}) catch break :blk p;
+            if (std.Io.Dir.cwd().access(io, twin, .{})) |_| break :blk twin else |_| {}
+            break :blk p;
+        }
+        const def = cartograph.usock.defaultPath(&pbuf, environ.getPosix("XDG_RUNTIME_DIR"));
+        const twin = std.fmt.bufPrint(&jbuf, "{s}.json", .{def}) catch break :blk def;
+        break :blk twin;
+    };
+
+    const fd = cartograph.usock.connect(path) catch
+        return failCtl(io, "no live session at '{s}'", .{path}, "start one: surveyor serve --socket <path>, or open cartograph-gtk");
+    defer cartograph.usock.close(fd);
+
+    // one command line out…
+    {
+        var cbuf: [512]u8 = undefined;
+        var cw = std.Io.Writer.fixed(&cbuf);
+        cartograph.agentcmd.writeFocusCommand(&cw, focus) catch return failUsage(io, "command too long", .{});
+        cw.writeByte('\n') catch return failUsage(io, "command too long", .{});
+        const bytes = cw.buffered();
+        var off: usize = 0;
+        while (off < bytes.len) {
+            const rc = std.os.linux.write(fd, bytes.ptr + off, bytes.len - off);
+            if (std.os.linux.errno(rc) != .SUCCESS)
+                return failCtl(io, "the session hung up mid-command", .{}, "retry; if it persists, restart the daemon");
+            off += rc;
+        }
+    }
+
+    // …the daemon's answer back: skip stream events, print the first ack/error line.
+    // Exit 0 on ack, 2 on error (the daemon named the problem + fix on the line).
+    var acc: [16 * 1024]u8 = undefined;
+    var used: usize = 0;
+    var deadline: i32 = 5000;
+    while (deadline > 0) {
+        var fds = [_]std.os.linux.pollfd{.{ .fd = fd, .events = std.os.linux.POLL.IN, .revents = 0 }};
+        const prc = std.os.linux.poll(&fds, 1, 100);
+        deadline -= 100;
+        if (std.os.linux.errno(prc) != .SUCCESS or prc == 0) continue;
+        if (used == acc.len) break;
+        const rc = std.os.linux.read(fd, acc[used..].ptr, acc.len - used);
+        if (std.os.linux.errno(rc) != .SUCCESS or rc == 0) break;
+        used += rc;
+        var start: usize = 0;
+        while (std.mem.indexOfScalarPos(u8, acc[0..used], start, '\n')) |nl| {
+            const line = acc[start..nl];
+            start = nl + 1;
+            const is_ack = std.mem.indexOf(u8, line, "\"ev\":\"ack\"") != null;
+            const is_err = std.mem.indexOf(u8, line, "\"ev\":\"error\"") != null;
+            if (!is_ack and !is_err) continue; // hello/posture/flow/… — stream noise for ctl
+            var obuf: [16 * 1024]u8 = undefined;
+            var fw = std.Io.File.stdout().writer(io, &obuf);
+            try fw.interface.print("{s}\n", .{line});
+            try fw.interface.flush();
+            std.process.exit(if (is_ack) 0 else 2);
+        }
+        std.mem.copyForwards(u8, &acc, acc[start..used]);
+        used -= start;
+    }
+    return failCtl(io, "no answer from the session within 5s", .{}, "is the daemon healthy? restart it and retry");
+}
+
+/// The shell grammar for `ctl focus` — positional, human-typeable, mapped onto the
+/// same Focus the JSON command carries.
+fn parseCtlFocus(io: std.Io, pos: []const []const u8) cartograph.Focus {
+    if (pos.len == 0) return failUsage(io, "ctl focus needs a target — orbit, flow, app, asn, or host", .{});
+    const t = pos[0];
+    if (std.mem.eql(u8, t, "orbit")) {
+        if (pos.len != 1) return failUsage(io, "ctl focus orbit takes no arguments", .{});
+        return .{ .shared = true };
+    }
+    if (std.mem.eql(u8, t, "app")) {
+        if (pos.len != 2) return failUsage(io, "usage: surveyor ctl focus app <comm>", .{});
+        return .{ .altitude = .region, .target = .{ .entity = .{ .app = cartograph.flow.Str(64).from(pos[1]) } }, .shared = true };
+    }
+    if (std.mem.eql(u8, t, "asn")) {
+        if (pos.len != 2) return failUsage(io, "usage: surveyor ctl focus asn <number>", .{});
+        const n = std.fmt.parseInt(u32, pos[1], 10) catch return failUsage(io, "'{s}' is not an AS number", .{pos[1]});
+        return .{ .altitude = .region, .target = .{ .entity = .{ .asn = n } }, .shared = true };
+    }
+    if (std.mem.eql(u8, t, "host")) {
+        if (pos.len != 2) return failUsage(io, "usage: surveyor ctl focus host <addr>", .{});
+        const a = cartograph.agentcmd.parseAddr(pos[1]) orelse return failUsage(io, "'{s}' is not an IPv4/IPv6 address", .{pos[1]});
+        return .{ .altitude = .region, .target = .{ .entity = .{ .host = a } }, .shared = true };
+    }
+    if (std.mem.eql(u8, t, "flow")) {
+        if (pos.len < 6 or pos.len > 7)
+            return failUsage(io, "usage: surveyor ctl focus flow <tcp|udp> <local> <lport> <remote> <rport> [street|ground]", .{});
+        const proto: cartograph.Proto = if (std.mem.eql(u8, pos[1], "tcp")) .tcp else if (std.mem.eql(u8, pos[1], "udp")) .udp else return failUsage(io, "proto is tcp or udp, not '{s}'", .{pos[1]});
+        const local = cartograph.agentcmd.parseAddr(pos[2]) orelse return failUsage(io, "'{s}' is not an address", .{pos[2]});
+        const lp = std.fmt.parseInt(u16, pos[3], 10) catch return failUsage(io, "'{s}' is not a port", .{pos[3]});
+        const remote = cartograph.agentcmd.parseAddr(pos[4]) orelse return failUsage(io, "'{s}' is not an address", .{pos[4]});
+        const rp = std.fmt.parseInt(u16, pos[5], 10) catch return failUsage(io, "'{s}' is not a port", .{pos[5]});
+        var altitude: cartograph.focus.Altitude = .street;
+        if (pos.len == 7) {
+            if (std.mem.eql(u8, pos[6], "ground")) {
+                altitude = .ground;
+            } else if (!std.mem.eql(u8, pos[6], "street"))
+                return failUsage(io, "flow altitude is street or ground, not '{s}'", .{pos[6]});
+        }
+        return .{
+            .altitude = altitude,
+            .target = .{ .flow = .{ .proto = proto, .local = local, .local_port = lp, .remote = remote, .remote_port = rp } },
+            .shared = true,
+        };
+    }
+    return failUsage(io, "unknown focus target '{s}' — orbit, flow, app, asn, or host", .{t});
+}
+
+/// A usage error: message to stderr, exit 3 (the workspace convention R4 — a typo'd
+/// verb/arg is a *usage* failure, distinct from a runtime one).
+fn failUsage(io: std.Io, comptime fmt: []const u8, fmt_args: anytype) noreturn {
+    var buf: [512]u8 = undefined;
+    var fw = std.Io.File.stderr().writer(io, &buf);
+    fw.interface.print("surveyor: " ++ fmt ++ "\n", fmt_args) catch {};
+    fw.interface.flush() catch {};
+    std.process.exit(3);
+}
+
+/// A ctl runtime failure, with the fix named (the error contract): exit 2.
+fn failCtl(io: std.Io, comptime fmt: []const u8, fmt_args: anytype, fix: []const u8) noreturn {
+    var buf: [512]u8 = undefined;
+    var fw = std.Io.File.stderr().writer(io, &buf);
+    fw.interface.print("surveyor: " ++ fmt ++ " — {s}\n", fmt_args ++ .{fix}) catch {};
+    fw.interface.flush() catch {};
+    std.process.exit(2);
 }

@@ -103,7 +103,7 @@ fn writeFlowFields(w: *Writer, f: *const Flow, lead_comma: bool) Writer.Error!vo
 /// agent's "what's my machine doing right now?" answer: listener inventory with
 /// exposure/risk badges + summary counts. Same Flow source as every other renderer,
 /// so it can never drift from what the TUI/GUI shows (parity).
-pub fn writeStatus(w: *Writer, flows: []const *Flow, now_ms: i64) Writer.Error!void {
+pub fn writeStatus(w: *Writer, flows: []const *Flow, now_ms: i64, posture: ipc.Posture) Writer.Error!void {
     var attributed: usize = 0;
     var established: usize = 0;
     var listeners: usize = 0;
@@ -127,6 +127,13 @@ pub fn writeStatus(w: *Writer, flows: []const *Flow, now_ms: i64) Writer.Error!v
     try w.print("{d}", .{ipc.protocol_version});
     try field(w, "ts_ms", true);
     try w.print("{d}", .{now_ms});
+    // Capture-mode truth (audit F14): what the stack is *actually* doing — polling vs the
+    // eBPF hybrid, passive DNS, GeoIP dbs — so "everything looks fine" can't hide a
+    // degraded posture from the one command whose whole job is posture.
+    try field(w, "capture", true);
+    try w.print("{{\"source\":\"{s}\",\"pdns\":{},\"geoip_asn\":{},\"geoip_country\":{}}}", .{
+        posture.sourceLabel(), posture.pdns, posture.geoip_asn, posture.geoip_country,
+    });
     try field(w, "flows", true);
     try w.print("{{\"total\":{d},\"attributed\":{d},\"established\":{d},\"listeners\":{d}}}", .{ flows.len, attributed, established, listeners });
     try field(w, "exposure", true);
@@ -254,6 +261,30 @@ pub fn writeFocusEvent(w: *Writer, f: focusmod.Focus) Writer.Error!void {
 /// even when nothing changed.
 pub fn writeTickEvent(w: *Writer, at_ms: i64, flows: usize) Writer.Error!void {
     try w.print("{{\"ev\":\"tick\",\"at_ms\":{d},\"flows\":{d}}}", .{ at_ms, flows });
+}
+
+/// Capture-mode truth on the stream (F14): emitted once after hello, and again if the
+/// posture ever changes, so a watching agent knows whether "everything" means the eBPF
+/// hybrid with true hostnames or polling-only with rDNS guesses.
+pub fn writePostureEvent(w: *Writer, p: ipc.Posture) Writer.Error!void {
+    try w.print("{{\"ev\":\"posture\",\"source\":\"{s}\",\"pdns\":{},\"geoip_asn\":{},\"geoip_country\":{}}}", .{
+        p.sourceLabel(), p.pdns, p.geoip_asn, p.geoip_country,
+    });
+}
+
+/// The daemon's answer to an accepted agent command (F3): named verb, ok:true.
+pub fn writeAckEvent(w: *Writer, cmd: []const u8) Writer.Error!void {
+    try w.print("{{\"ev\":\"ack\",\"cmd\":\"{s}\",\"ok\":true}}", .{cmd});
+}
+
+/// The daemon's answer to a rejected agent command: what failed and how to fix it
+/// (the workspace error contract — an error without a fix is a bug).
+pub fn writeErrorEvent(w: *Writer, msg: []const u8, fix: []const u8) Writer.Error!void {
+    try w.writeAll("{\"ev\":\"error\",\"error\":");
+    try str(w, msg);
+    try field(w, "fix", true);
+    try str(w, fix);
+    try w.writeByte('}');
 }
 
 fn field(w: *Writer, name: []const u8, comma: bool) Writer.Error!void {
@@ -487,6 +518,40 @@ test "event-stream lines parse and carry the right discriminator" {
         defer p.deinit();
         try t.expectEqualStrings("tick", p.value.object.get("ev").?.string);
         try t.expectEqual(@as(i64, 7), p.value.object.get("flows").?.integer);
+    }
+}
+
+test "posture, ack, and error events parse and self-identify" {
+    const t = std.testing;
+    var buf: [512]u8 = undefined;
+    {
+        var w = Writer.fixed(&buf);
+        try writePostureEvent(&w, .{ .source = .hybrid, .pdns = true, .geoip_asn = false, .geoip_country = false });
+        const p = try std.json.parseFromSlice(std.json.Value, t.allocator, w.buffered(), .{});
+        defer p.deinit();
+        const o = p.value.object;
+        try t.expectEqualStrings("posture", o.get("ev").?.string);
+        try t.expectEqualStrings("ebpf+polling", o.get("source").?.string);
+        try t.expect(o.get("pdns").?.bool);
+        try t.expect(!o.get("geoip_asn").?.bool);
+    }
+    {
+        var w = Writer.fixed(&buf);
+        try writeAckEvent(&w, "focus");
+        const p = try std.json.parseFromSlice(std.json.Value, t.allocator, w.buffered(), .{});
+        defer p.deinit();
+        try t.expectEqualStrings("ack", p.value.object.get("ev").?.string);
+        try t.expect(p.value.object.get("ok").?.bool);
+    }
+    {
+        var w = Writer.fixed(&buf);
+        try writeErrorEvent(&w, "unknown \"command\"", "see `surveyor --schema`");
+        const p = try std.json.parseFromSlice(std.json.Value, t.allocator, w.buffered(), .{});
+        defer p.deinit();
+        const o = p.value.object;
+        try t.expectEqualStrings("error", o.get("ev").?.string);
+        try t.expectEqualStrings("unknown \"command\"", o.get("error").?.string); // escaping held
+        try t.expect(o.get("fix").?.string.len > 0); // the contract: every error names its fix
     }
 }
 

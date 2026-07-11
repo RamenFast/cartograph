@@ -67,20 +67,21 @@ pub const SessionState = struct {
         self.focus = f;
     }
 
-    /// Fold a `user_state` change in. Returns true if it altered this *view-local*
-    /// session (so the caller redraws); false for changes that are **shared truth**, not a
-    /// per-view session change:
+    /// Fold a `user_state` change in. Returns true if it altered this renderer's
+    /// session (so the caller redraws); false for changes that are **persisted shared
+    /// truth**, not view state:
     ///   * `.greeting` — surveyor-owned, persisted (D22).
-    ///   * `.focus` when `shared` — the session cursor every observer follows; surveyor owns
-    ///     and broadcasts it (R1, next-session). A *solo* focus is view-local and lands here.
+    /// Focus — solo or shared — always folds: a renderer holds whatever cursor it was
+    /// told about. *Routing* (does this focus move only my view, or the session cursor
+    /// every observer follows?) is not a renderer decision — it is `atlas.route`, made
+    /// once in surveyor. By the time a shared focus reaches a renderer it is already
+    /// session truth, and the renderer's job is simply to show it (F4: the broadcast
+    /// only co-observes if the windows actually follow it).
     pub fn apply(self: *SessionState, us: ontology.UserState) bool {
         switch (us) {
             .profile => |p| self.setProfile(p),
             .lens_toggle => |lt| self.toggleLens(lt.lens, lt.on),
-            .focus => |f| {
-                if (f.shared) return false; // shared cursor — surveyor's to broadcast, not view-local
-                self.setFocus(f);
-            },
+            .focus => |f| self.setFocus(f),
             .greeting => return false, // shared truth — not a view-local session change
         }
         return true;
@@ -120,7 +121,7 @@ test "a fresh session is its profile's lens bundle" {
     try t.expect(!s.activeLenses().contains(.endpoint)); // calm hides it
 }
 
-test "apply: profile switch and lens toggle are the two view-local changes" {
+test "apply: profile switch, lens toggle, and the cursor are renderer state" {
     const t = std.testing;
     var s = SessionState.init(.calm);
 
@@ -137,6 +138,10 @@ test "apply: profile switch and lens toggle are the two view-local changes" {
     // a greeting is NOT a view-local session change (D22: shared truth)
     const g: ontology.Greeting = .{ .key = .{ .asn = 13335 }, .state = .greeted };
     try t.expect(!s.apply(.{ .greeting = g }));
+
+    // a broadcast shared focus folds in — the window *follows* the session cursor (F4)
+    try t.expect(s.apply(.{ .focus = .{ .shared = true } }));
+    try t.expect(s.focus.shared);
 }
 
 test "toggling is idempotent (absolute on/off, not a flip)" {

@@ -29,6 +29,8 @@ pub const appicon = @import("appicon.zig");
 pub const fmtutil = @import("fmt.zig");
 pub const usock = @import("usock.zig");
 pub const parity = @import("parity.zig");
+pub const atlas = @import("atlas.zig");
+pub const agentcmd = @import("agentcmd.zig");
 
 // Convenience re-exports of the most-used types.
 pub const Proto = flow.Proto;

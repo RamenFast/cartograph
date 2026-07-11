@@ -4,6 +4,8 @@
 //!
 //!   cartograph-gtk --socket <path>   connect to `surveyor serve --socket <path>`
 //!   surveyor serve | cartograph-gtk  read IPC frames from stdin (the pipe path)
+//!   cartograph-gtk                   double-click path: join the box's default session
+//!                                    daemon (spawning one — with --bpf — if none is live)
 //!
 //! Layout: a paned window — the live flow list on the left (a `GtkListBox` whose rows
 //! are created/updated/removed *individually*, never rebuilt wholesale), and the docked
@@ -101,6 +103,7 @@ extern fn gtk_list_box_new() ?*anyopaque;
 extern fn gtk_list_box_append(box: ?*anyopaque, child: ?*anyopaque) void;
 extern fn gtk_list_box_remove(box: ?*anyopaque, child: ?*anyopaque) void;
 extern fn gtk_list_box_unselect_all(box: ?*anyopaque) void;
+extern fn gtk_list_box_select_row(box: ?*anyopaque, row: ?*anyopaque) void;
 extern fn gtk_list_box_set_sort_func(box: ?*anyopaque, sort_func: GtkListBoxSortFunc, user_data: ?*anyopaque, destroy: ?*anyopaque) void;
 extern fn gtk_list_box_invalidate_sort(box: ?*anyopaque) void;
 extern fn gtk_list_box_row_new() ?*anyopaque;
@@ -259,6 +262,7 @@ const App = struct {
     selected_key: ?FlowKey = null,
     suppress_select: bool = false, // guard against unselect feedback while clearing
     now_ms: i64 = 0, // surveyor's clock, from tick frames (anchors the why ages)
+    posture: ?ipc.Posture = null, // capture-mode truth from the producer (F14)
     frames: ipc.FrameStream,
     scratch: []u8, // markup scratch (NUL-terminated before handing to GTK)
 
@@ -300,8 +304,14 @@ const App = struct {
                 self.table.remove(k);
                 self.removeRow(k);
             },
-            // surveyor's authoritative session (inherit-on-connect + echo, D22)
+            // surveyor's authoritative session (inherit-on-connect + echo + shared-cursor
+            // broadcast, D22/D24)
             .user_state => |us| if (self.session.apply(us)) {
+                if (us == .focus) self.followCursor(us.focus); // co-observation is *visible* (F4)
+                ticked = true;
+            },
+            .posture => |p| {
+                self.posture = p; // capture-mode truth, rendered in the header (F14)
                 ticked = true;
             },
             .tick => |ms| {
@@ -311,6 +321,25 @@ const App = struct {
             else => {},
         };
         return ticked;
+    }
+
+    /// The session cursor moved (surveyor's broadcast — a human in another window or an
+    /// agent's `ctl focus`). Make the window *visibly* follow it: a flow cursor selects
+    /// that row; anything else clears the row selection (the header line + why panel
+    /// carry the entity/orbit description). Suppressed so following can't echo upstream.
+    fn followCursor(self: *App, f: cartograph.Focus) void {
+        self.suppress_select = true;
+        defer self.suppress_select = false;
+        switch (f.target) {
+            .flow => |key| {
+                self.selected_key = key;
+                if (self.rows.get(key)) |r| gtk_list_box_select_row(self.listbox, r.row);
+            },
+            else => {
+                self.selected_key = null;
+                gtk_list_box_unselect_all(self.listbox);
+            },
+        }
     }
 
     fn removeRow(self: *App, key: FlowKey) void {
@@ -359,7 +388,7 @@ const App = struct {
         defer self.gpa.free(flows);
 
         self.syncControls();
-        self.setLabelMarkup(self.header, writeHeaderMarkup, .{ flows, self.session });
+        self.setLabelMarkup(self.header, writeHeaderMarkup, .{ flows, self.session, self.posture });
 
         const set = self.session.activeLenses();
         for (flows, 0..) |f, rank| {
@@ -451,7 +480,7 @@ fn span(w: *Writer, color: []const u8, s: []const u8, width: usize) Writer.Error
 /// The header block: summary line, the shared cursor, and column names. The
 /// profile/lens rail lives in the headerbar as real controls now (house law:
 /// essential actions get buttons) — the keys still work, same session behind both.
-fn writeHeaderMarkup(w: *Writer, flows: []*Flow, session: SessionState) Writer.Error!void {
+fn writeHeaderMarkup(w: *Writer, flows: []*Flow, session: SessionState, posture: ?ipc.Posture) Writer.Error!void {
     const set = session.activeLenses();
     var down_total: u64 = 0;
     var up_total: u64 = 0;
@@ -470,9 +499,19 @@ fn writeHeaderMarkup(w: *Writer, flows: []*Flow, session: SessionState) Writer.E
     try w.print(
         "<span foreground=\"{s}\"><b>{d}</b></span><span foreground=\"{s}\"> flows · </span>" ++
             "<span foreground=\"{s}\"><b>{d}</b></span><span foreground=\"{s}\"> attributed   </span>" ++
-            "<span foreground=\"{s}\">↓ {s}</span>  <span foreground=\"{s}\">↑ {s}</span>\n",
+            "<span foreground=\"{s}\">↓ {s}</span>  <span foreground=\"{s}\">↑ {s}</span>",
         .{ gold, flows.len, muted, gold, attributed, muted, sky, cartograph.humanRate(&dbuf, down_total), tan, cartograph.humanRate(&ubuf, up_total) },
     );
+    // capture-mode truth (F14): what this view is actually built from — eBPF hybrid or
+    // polling, true DNS or rDNS guesses, geography or not. Quiet, but always visible;
+    // a menu-launched window must never look complete while running degraded.
+    if (posture) |p| {
+        var pb: [64]u8 = undefined;
+        try w.print("   <span foreground=\"{s}\">", .{muted});
+        try esc(w, p.describe(&pb));
+        try w.writeAll("</span>");
+    }
+    try w.writeByte('\n');
 
     // the shared cursor (D24) — the same describe() line the agent's focus event
     // carries, in the accent: the one shared thing every observer holds together
@@ -646,7 +685,9 @@ fn onSortRows(row1: ?*anyopaque, row2: ?*anyopaque, _: ?*anyopaque) callconv(.c)
 
 /// Selection → the shared cursor (D24): a row is a flow, so selecting it descends the
 /// focus to street altitude on that flow; clearing returns to orbit. Both travel
-/// upstream as `user_state{focus}` so surveyor + any watching agent follow along.
+/// upstream as a **shared** `user_state{focus}` — the session cursor every observer
+/// follows (F4): surveyor folds it into the SharedSession and broadcasts it, so the
+/// agent's stream and any other window move with this click.
 fn onRowSelected(_: ?*anyopaque, row: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
     const app: *App = @ptrCast(@alignCast(user_data.?));
     if (app.suppress_select) return;
@@ -654,13 +695,13 @@ fn onRowSelected(_: ?*anyopaque, row: ?*anyopaque, user_data: ?*anyopaque) callc
     if (row) |r| {
         const key = app.row_keys.get(@intFromPtr(r)) orelse return;
         app.selected_key = key;
-        const f = cartograph.Focus{ .altitude = .street, .target = .{ .flow = key } };
+        const f = cartograph.Focus{ .altitude = .street, .target = .{ .flow = key }, .shared = true };
         app.session.setFocus(f);
         app.sendUpstream(.{ .focus = f });
     } else {
         app.selected_key = null;
-        app.session.setFocus(.{});
-        app.sendUpstream(.{ .focus = .{} });
+        app.session.setFocus(.{ .shared = true });
+        app.sendUpstream(.{ .focus = .{ .shared = true } });
     }
     app.redraw();
 }
@@ -843,10 +884,14 @@ fn fail(io: std.Io, comptime fmt: []const u8, fmt_args: anytype) noreturn {
     std.process.exit(2);
 }
 
-/// Spawn `surveyor serve` as our private producer and hand back its stdout pipe.
-/// The child inherits stderr (its degrade notes stay visible) and dies with us.
+/// Spawn `surveyor serve --bpf --socket <path> --exit-idle` as the box's session daemon
+/// (the double-click path, audit F2). `--bpf` makes the documented setcap opt-in *count*
+/// here — surveyor upgrades to the hybrid source when the binary holds caps and degrades
+/// loudly (and now visibly, via the posture frame) when it doesn't. `--exit-idle` ties the
+/// daemon's life to its observers, so closing the window leaves nothing behind. stderr is
+/// inherited (degrade notes stay visible in a terminal).
 /// PATH resolves the installed binary; a build tree finds its sibling first.
-fn spawnSurveyor(io: std.Io) !std.process.Child {
+fn spawnSurveyor(io: std.Io, sock: []const u8) !std.process.Child {
     // Prefer the surveyor sitting next to this binary (the build tree / staged
     // install case); fall back to PATH (the packaged case).
     var self_buf: [4096]u8 = undefined;
@@ -864,9 +909,9 @@ fn spawnSurveyor(io: std.Io) !std.process.Child {
         }
     } else |_| {}
     return std.process.spawn(io, .{
-        .argv = &.{ argv0, "serve" },
+        .argv = &.{ argv0, "serve", "--bpf", "--socket", sock, "--exit-idle" },
         .stdin = .close,
-        .stdout = .pipe,
+        .stdout = .close,
         .stderr = .inherit,
     });
 }
@@ -934,15 +979,17 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // The IPC source, by preference:
-    //   --socket <path>      the shared daemon boundary (full-duplex)
+    //   --socket <path>      an explicit daemon boundary (full-duplex)
     //   frames on stdin      `surveyor serve | cartograph-gtk` (pipe/socket/replay file)
-    //   neither              spawn our own `surveyor serve` child — the double-click
-    //                        path. Frames can only arrive if something is actually
-    //                        wired to stdin: a FIFO, a socketpair, or a recorded-frames
+    //   neither              the double-click path (F2): join the box's *default session
+    //                        daemon*, spawning one (with --bpf + --exit-idle) if none is
+    //                        live. A window opened from the menu thus shares one capture
+    //                        core — and one cursor — with every agent and terminal that
+    //                        connects to the same well-known socket.
+    //                        Frames can only arrive on stdin if something is actually
+    //                        wired to it: a FIFO, a socketpair, or a recorded-frames
     //                        file. Anything else (a terminal, the menu launcher's
-    //                        /dev/null, a closed fd) has no producer behind it, so spawn.
-    //                        A tty check can't make this call — desktop launchers hand
-    //                        every app /dev/null: not a tty *and* not a pipe.
+    //                        /dev/null, a closed fd) has no producer behind it, so join.
     const stdin_feeds_frames = blk: {
         const st = std.Io.File.stdin().stat(io) catch break :blk false;
         break :blk switch (st.kind) {
@@ -950,6 +997,7 @@ pub fn main(init: std.process.Init) !void {
             else => false,
         };
     };
+    var default_sock_buf: [128]u8 = undefined;
     var spawned: ?std.process.Child = null;
     const fd: std.posix.fd_t = if (sock_path) |p|
         connectWithRetry(io, p) catch
@@ -957,10 +1005,19 @@ pub fn main(init: std.process.Init) !void {
     else if (stdin_feeds_frames)
         std.Io.File.stdin().handle
     else blk: {
-        spawned = spawnSurveyor(io) catch
+        const def = cartograph.usock.defaultPath(&default_sock_buf, init.minimal.environ.getPosix("XDG_RUNTIME_DIR"));
+        // join a live session first; only spawn when the box has none
+        if (cartograph.usock.connect(def)) |sfd| {
+            sock_path = def; // full-duplex from here on
+            break :blk sfd;
+        } else |_| {}
+        spawned = spawnSurveyor(io, def) catch
             fail(io, "could not start `surveyor serve` (is cartograph installed?) — " ++
                 "or pipe one in: surveyor serve | cartograph-gtk", .{});
-        break :blk spawned.?.stdout.?.handle;
+        const sfd = connectWithRetry(io, def) catch
+            fail(io, "the spawned surveyor never opened '{s}' — check stderr above", .{def});
+        sock_path = def;
+        break :blk sfd;
     };
     defer if (sock_path != null) cartograph.usock.close(fd);
     setNonBlocking(fd);

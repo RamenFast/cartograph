@@ -138,6 +138,8 @@ const App = struct {
     selected_key: ?cartograph.FlowKey = null,
     /// Row order as of the last draw — what j/k navigate over.
     last_order: std.ArrayList(cartograph.FlowKey) = .empty,
+    /// Capture-mode truth from the producer (F14) — shown in the header over IPC.
+    posture: ?ipc.Posture = null,
     quit: bool = false,
 
     fn init(gpa: std.mem.Allocator, io: std.Io) !App {
@@ -223,7 +225,8 @@ const App = struct {
     }
 
     /// Move the selection cursor over the last drawn row order; wires the row to the
-    /// shared focus seam (street altitude on that flow) and sends it upstream (D24).
+    /// shared focus seam (street altitude on that flow) and sends it upstream as the
+    /// **session** cursor (D24/F4) — surveyor broadcasts it to every observer.
     fn moveSelection(self: *App, delta: i32) bool {
         const order = self.last_order.items;
         if (order.len == 0) return false;
@@ -240,7 +243,7 @@ const App = struct {
         idx = std.math.clamp(idx, 0, @as(i64, @intCast(order.len - 1)));
         const key = order[@intCast(idx)];
         self.selected_key = key;
-        const f = cartograph.Focus{ .altitude = .street, .target = .{ .flow = key } };
+        const f = cartograph.Focus{ .altitude = .street, .target = .{ .flow = key }, .shared = true };
         self.session.setFocus(f);
         self.sendUpstream(.{ .focus = f });
         return true;
@@ -249,8 +252,8 @@ const App = struct {
     fn clearSelection(self: *App) bool {
         if (self.selected_key == null) return false;
         self.selected_key = null;
-        self.session.setFocus(.{}); // back to the orbit establishing shot
-        self.sendUpstream(.{ .focus = .{} });
+        self.session.setFocus(.{ .shared = true }); // back to the orbit establishing shot
+        self.sendUpstream(.{ .focus = .{ .shared = true } });
         return true;
     }
 
@@ -327,9 +330,19 @@ const App = struct {
         while (try frames.next()) |frame| switch (frame) {
             .flow_upsert => |f| try self.table.apply(f),
             .flow_closed => |k| self.table.remove(k),
-            // surveyor's authoritative session (inherit-on-connect + echo, D22): the
-            // frontend renders from what the one owner confirms, never a private cache.
+            // surveyor's authoritative session (inherit-on-connect + echo + shared-cursor
+            // broadcast, D22/D24): the frontend renders from what the one owner confirms.
             .user_state => |us| if (self.session.apply(us)) {
+                // co-observation is *visible* (F4): the broadcast cursor moves this
+                // window's row highlight, exactly as a local j/k would
+                if (us == .focus) self.selected_key = switch (us.focus.target) {
+                    .flow => |key| key,
+                    else => null,
+                };
+                ticked = true;
+            },
+            .posture => |p| {
+                self.posture = p; // capture-mode truth in the header (F14)
                 ticked = true;
             },
             .tick => ticked = true,
@@ -345,14 +358,14 @@ const App = struct {
         if (self.enricher) |*e| e.decorate(flows, capture.nowMs(self.io)); // parity with surveyor's post-pass
         self.last_order.clearRetainingCapacity(); // what j/k navigate next
         for (flows) |f| try self.last_order.append(self.gpa, f.key);
-        try render(self.w(), flows, sz, self.session, mode_label, self.selected_key, capture.nowMs(self.io));
+        try render(self.w(), flows, sz, self.session, mode_label, self.selected_key, capture.nowMs(self.io), self.posture);
         try self.w().flush();
     }
 };
 
 // ---- rendering --------------------------------------------------------------
 
-fn render(w: *Writer, flows: []*Flow, sz: term.Size, session: SessionState, mode_label: []const u8, selected_key: ?cartograph.FlowKey, now_ms: i64) !void {
+fn render(w: *Writer, flows: []*Flow, sz: term.Size, session: SessionState, mode_label: []const u8, selected_key: ?cartograph.FlowKey, now_ms: i64, posture: ?ipc.Posture) !void {
     const set = session.activeLenses();
 
     var down_total: u64 = 0;
@@ -375,12 +388,14 @@ fn render(w: *Writer, flows: []*Flow, sz: term.Size, session: SessionState, mode
     const urate = cartograph.humanRate(&ubuf, up_total);
     // ◌ this view: the profile/lens controls reach only this window (D22/D23).
     const sc = cartograph.scope.Scope.view;
+    var pbuf: [64]u8 = undefined;
+    const posture_label: []const u8 = if (posture) |p| p.describe(&pbuf) else mode_label;
     try w.print("{s}{s}▟▖ cartograph{s}  {s}·{s}  {d} flows · {d} attributed    {s}↓{s} {s}  {s}↑{s} {s}    {s}{s} [{s}] {s} {s}{s}", .{
         term.bold,         sky,        term.reset,
         term.dim,          term.reset, flows.len,
         attributed,        sky,        term.reset,
         drate,             tan,        term.reset,
-        urate,                     term.dim, mode_label,
+        urate,                     term.dim, posture_label,
         session.profile.label(),   sc.glyph(), sc.label(), term.reset,
     });
     try w.writeAll(term.clear_to_eol ++ "\r\n");

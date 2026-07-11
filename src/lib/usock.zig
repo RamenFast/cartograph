@@ -71,9 +71,7 @@ pub fn listen(path: []const u8) !i32 {
     return fd;
 }
 
-pub fn accept(listen_fd: i32) !i32 {
-    const fd: i32 = @intCast(try ok(linux.accept4(listen_fd, null, null, 0)));
-    errdefer _ = linux.close(fd);
+fn checkPeerCred(fd: i32) !void {
     // Peer-credential check (F9): the socket file is 0600, but defense-in-depth —
     // only the owning user (or root) may consume the flow stream.
     var cred: extern struct { pid: i32, uid: u32, gid: u32 } = undefined;
@@ -84,7 +82,48 @@ pub fn accept(listen_fd: i32) !i32 {
         const me = linux.getuid();
         if (cred.uid != me and cred.uid != 0) return error.PeerNotOwner;
     }
+}
+
+pub fn accept(listen_fd: i32) !i32 {
+    const fd: i32 = @intCast(try ok(linux.accept4(listen_fd, null, null, 0)));
+    errdefer _ = linux.close(fd);
+    try checkPeerCred(fd);
     return fd;
+}
+
+/// Accept without blocking: null when no connection is pending. The *listen* fd must
+/// be nonblocking (`setNonblocking`); the accepted fd stays blocking — the daemon polls
+/// before every read, and writes ride the normal blocking path (audit F5: one accept
+/// loop that never parks on a single client).
+pub fn acceptNonblocking(listen_fd: i32) !?i32 {
+    const rc = linux.accept4(listen_fd, null, null, 0);
+    if (linux.errno(rc) == .AGAIN) return null;
+    const fd: i32 = @intCast(try ok(rc));
+    errdefer _ = linux.close(fd);
+    try checkPeerCred(fd);
+    return fd;
+}
+
+/// Flip a descriptor to O_NONBLOCK (the daemon's listen fd, so a raced-away
+/// connection can never park the whole session in accept()).
+pub fn setNonblocking(fd: i32) void {
+    const F_GETFL = 3;
+    const F_SETFL = 4;
+    const O_NONBLOCK: usize = 0o4000;
+    const cur = linux.fcntl(@intCast(fd), F_GETFL, 0);
+    if (linux.errno(cur) != .SUCCESS) return;
+    _ = linux.fcntl(@intCast(fd), F_SETFL, cur | O_NONBLOCK);
+}
+
+/// The box's *default* session socket — where the double-clicked GUI hosts its daemon
+/// and where `surveyor ctl` looks when no --socket is given. One well-known rendezvous
+/// is what lets the human's window and the agent's command meet in the same session
+/// (audit F2/F3): $XDG_RUNTIME_DIR/cartograph.sock, else /tmp/cartograph-<uid>.sock.
+pub fn defaultPath(buf: []u8, runtime_dir: ?[]const u8) []const u8 {
+    if (runtime_dir) |rd| {
+        if (std.fmt.bufPrint(buf, "{s}/cartograph.sock", .{rd})) |s| return s else |_| {}
+    }
+    return std.fmt.bufPrint(buf, "/tmp/cartograph-{d}.sock", .{linux.getuid()}) catch unreachable;
 }
 
 pub fn connect(path: []const u8) !i32 {
