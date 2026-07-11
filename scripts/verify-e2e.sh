@@ -21,17 +21,29 @@ check(){ if [ "$1" -eq 0 ]; then ok "$2"; else bad "$2"; fi }
 # ---- 0. build + unit tests -------------------------------------------------
 BUILD_FLAGS=""
 if [ "$BPF_FLAG" = "--bpf-auto" ]; then
-    if command -v bpftool >/dev/null 2>&1 && [ -r /sys/kernel/btf/vmlinux ]; then
+    # bpftool on Ubuntu is a wrapper that fails unless the kernel-matched
+    # linux-tools package is installed — so probe that it RUNS, not that it exists.
+    if bpftool version >/dev/null 2>&1 && [ -r /sys/kernel/btf/vmlinux ]; then
         BUILD_FLAGS="-Dbpf=true"
     fi
 elif [ "$BPF_FLAG" = "--bpf" ]; then BUILD_FLAGS="-Dbpf=true"; fi
 if pkg-config --exists gtk4 2>/dev/null; then BUILD_FLAGS="$BUILD_FLAGS -Dgtk=true"; fi
 printf '%sbuild flags:%s %s\n' "$DIM" "$RST" "${BUILD_FLAGS:-'(none)'}"
 
-$ZIG build $BUILD_FLAGS >/dev/null 2>&1
-check $? "zig build $BUILD_FLAGS"
-$ZIG build test $BUILD_FLAGS >/dev/null 2>&1
-check $? "zig build test (unit suite)"
+BUILD_LOG=$(mktemp /tmp/cg-build-XXXX.log)
+if $ZIG build $BUILD_FLAGS >"$BUILD_LOG" 2>&1; then
+    ok "zig build $BUILD_FLAGS"
+else
+    bad "zig build $BUILD_FLAGS"
+    echo "---- build log ----"; cat "$BUILD_LOG"; echo "-------------------"
+fi
+if $ZIG build test $BUILD_FLAGS >"$BUILD_LOG" 2>&1; then
+    ok "zig build test (unit suite)"
+else
+    bad "zig build test (unit suite)"
+    echo "---- test log ----"; cat "$BUILD_LOG"; echo "------------------"
+fi
+rm -f "$BUILD_LOG"
 
 B=./zig-out/bin/surveyor
 [ -x "$B" ] || { bad "surveyor binary exists"; echo "cannot continue"; exit 1; }
