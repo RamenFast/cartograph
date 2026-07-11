@@ -1,5 +1,11 @@
 # Cartograph — Data streams / "Lenses" (togglable information layers)
 
+> ⚠ **Design source, not reference.** The lens *mechanism* is built (six toggles + profiles,
+> live in the TUI and GTK). Most of the *catalog* below — SNI, cgroup/container, systemd
+> unit, nDPI, packet lenses — is not captured yet; a lens can only show what the capture
+> layer produces (see `surveyor --schema` for the real field list). Read the catalog as
+> the menu we are cooking toward. (Audit F32.)
+
 You asked for new, togglable data categories for live presentation. Cartograph models
 every information layer as a **lens** — an overlay/column/stream you switch on or off.
 **Calm by default** (a handful on), **deep on demand** (stack as many as you want). Lenses

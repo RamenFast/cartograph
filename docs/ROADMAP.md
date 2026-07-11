@@ -3,6 +3,13 @@
 Each milestone is shippable and demoable on its own. ✅ done · 🔨 next · ⬜ planned.
 Cross-resource and visual-language work is threaded through, not bolted on at the end.
 
+> ⚠ **Reality check (2026-07-11, audit F27):** V1 (2026-07-03) and v1.0.0 (2026-07-08)
+> delivered pieces of later milestones out of order — app icons (M7), the Why narration
+> (M8's non-LLM half), and packaging/man pages/deb+rpm (M9) are **shipped**, and the
+> 2026-07-11 session-daemon wave delivered multi-observer + agent commands that no
+> milestone below names. The per-milestone notes are updated where they'd mislead;
+> `NEXT-SESSION.md` is the current-state authority.
+
 ## M0 — Foundation  ✅ (done this session)
 - ✅ Env validated: kernel 6.17, **BTF present** (CO-RE works), Cinnamon/X11, **Radeon RX 6700 XT**.
 - ✅ Heavy deps installed: clang/llvm 18, libbpf, libpcap, libndpi, bpftrace, tshark, **Elixir/OTP 27**.
@@ -116,21 +123,25 @@ Cross-resource and visual-language work is threaded through, not bolted on at th
   as a M7 afterthought (critique §3). Rules must reload + **re-arm XDP on boot** (STATE.md).
 
 ## M7 — Identity, GPU map & ambient
-- Local app icons (XDG/.desktop) + remote logo/brand pack + favicon cache + category glyphs.
+- ✅ **Local app icons shipped early** (V1/S4: XDG/.desktop resolution, GTK rows wear them).
+  Still here: remote logo/brand pack + favicon cache + category glyphs.
 - **GPU**: Vulkan-compute force-directed layout (RADV) for a smooth large map; **ambient
   "aquarium" mode**.
 
 ## M8 — The "Why" narrative, local-LLM & cross-resource fusion
-- Plain-language flow narration; **ollama** offline "explain / is this normal?"; the
-  **daily postcard**; the **Resource lens** correlating net ↔ CPU/GPU/RAM/energy.
+- ✅ **The non-LLM narration shipped early** (V1/S2: `src/lib/why.zig` — plain-language flow
+  description, docked panel in GTK + TUI). Still here: **ollama** offline "explain / is this
+  normal?"; the **daily postcard**; the **Resource lens** correlating net ↔ CPU/GPU/RAM/energy;
+  and *causal* why (launch-time correlation — audit F6).
 - **`Reading` + `Ruling` types** drive the narrative + postcard. Two LLM surfaces, two
   contracts: the *live "explain this flow"* verb is the local model's voice; the *postcard
   template is the user's voice* (`postcard --profile ben`) — don't conflate (critique §3/§4).
   The model sees a **whitelist**, never raw flow (STATE.md privacy posture).
 
-## M9 — Packaging, man pages & polish
-- Portable CO-RE surveyor binary (multi-distro); `.deb`; systemd unit; ship `cartograph(1)`
-  + per-verb man pages (drafted); first-run "doctor".
+## M9 — Packaging, man pages & polish  *(largely shipped with v1.0.0, 2026-07-08)*
+- ✅ deb + rpm + source tarball + SHA256SUMS (identical payloads by construction); ✅ man
+  pages for all three binaries; ✅ desktop entry + icon caches. Still open: systemd unit,
+  first-run "doctor", RPM verified on an RPM-native distro, a headless (no-GTK) package.
 
 ## Later / the bigger arc
 - Wayland layer-shell ambient overlay; **time-travel replay (DVR)**; **attack-surface mirror**;

@@ -1,5 +1,12 @@
 # Cartograph — CLI & the "Bloom" terminal UX philosophy
 
+> ⚠ **Design source, not reference.** Most verbs on this page (`orbit`, `watch`, `why`,
+> `peek`, `trace`, `block`, `lens`, `ambient`, `replay`, `doctor`…) are **not built**.
+> The shipped verb set is exactly what `surveyor --help` and `surveyor --schema` print:
+> `status` · `snapshot` · `serve` · `ctl focus` · `schema`. This document is the
+> UX philosophy those future verbs will be built against — read it as intent, never as
+> "run this today." (Audit F32.)
+
 > **Bloom:** the tool opens as a single calm flower and *unfolds* as you lean in. Nothing
 > is required to start; every step deeper is discoverable, forgiving, and a little
 > delightful. Verbs read like sentences. Help is beautiful. You never memorize flags —

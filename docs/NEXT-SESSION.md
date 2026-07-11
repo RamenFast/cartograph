@@ -1,8 +1,60 @@
 # Cartograph — next session (start here)
 
-> Updated 2026-07-08 (**v1.0.0 RELEASED**). New here? Read [docs/V1.md](V1.md) (the scope call +
-> the S1→S4 build log), then [docs/README.md](README.md) (index + status map). Everything builds +
-> tests green: **`zig build test` = 73, `-Dbpf=true` = 78.**
+> Updated 2026-07-11 (**the alignment waves**). New here? Read
+> [VISION-ALIGNMENT-AUDIT.md](VISION-ALIGNMENT-AUDIT.md) (the 32 ranked findings this
+> session worked from), then [docs/README.md](README.md) (index + status map).
+> Everything builds + tests green: **90/90** (`-Dbpf=true -Dgtk=true`), and
+> **`scripts/verify-e2e.sh` = 15/15** against the real binaries and a live daemon
+> (CI runs it on every push).
+
+## 🧭 2026-07-11 — the alignment waves (audit → four commits)
+
+A full pass against the audit's ranked findings, each wave verified live before commit:
+
+- **Wave 1 (`47affb0`) — truth + safety.** eBPF attribution no longer invents identities
+  (F7); CGNAT/100.64/8 counts as exposed (F8); the daemon socket is 0600 + SO_PEERCRED
+  same-uid checked (F9/F21); `serve --json | head -1` exits 0, not a stack trace (F19).
+- **Wave 2 (`b0875dd`) — one session, many observers.** The multiplexed session daemon:
+  `serve --socket <p>` serves binary frames on `<p>` and duplex NDJSON on `<p>.json` to
+  ANY number of clients from one capture core (F5), with dead-client sweep (no fd leak,
+  F20). The shared cursor is real: any observer's focus broadcasts to every window and
+  agent (F4). The agent can *act*: JSON commands in (`focus`/`watch`) with ack/error+fix
+  replies (F3), plus `surveyor ctl focus …` as the shell hand. `cartograph-gtk` with no
+  args joins-or-spawns the default session daemon with `--bpf --exit-idle` (F2). Posture
+  frame (type 10) makes degraded capture visible in every frontend header (F14).
+  proto_version 4→5. New: `src/lib/atlas.zig` (session core), `src/lib/agentcmd.zig`
+  (command codec).
+- **Wave 3 (`f149a15`) — the workspace's common tongue.** `status`/`--schema` open with
+  the standard envelope (status/tool/version/ts, ISO-8601); every stream line carries
+  canonical `event` + legacy `ev` alias; unknown verbs/flags exit 3 everywhere (F16);
+  `--schema` documents the daemon, ctl, all 8 events, and command shapes (F17); docs/man
+  caught up (F27/F32 prep).
+- **Wave 4 (`20200c4`) — the system proves itself.** `scripts/verify-e2e.sh`: 15 checks
+  against the shipped binaries including a live two-observer broadcast test and fd-churn
+  check (F25). `.github/workflows/ci.yml` runs it on push (F26). The station page's
+  essential flows became working stone buttons via station-helper (F23).
+- **Wave 5 — docs honesty.** This update; banners on design-source docs (F32);
+  `atlas/README.md` says placeholder honestly (F28); README's absolute claims softened to
+  the honest-unknowns story (F15); index de-contradicted (F27).
+
+**Deliberately NOT built this session** (documented, not hidden): the constellation map
+(F1 — the hardest 20%, the altitude/focus seam is ready for it), persistence (F11 —
+STATE.md is the contract, sqlite store unbuilt), causal why (F6 — the Why panel narrates
+state, not causation), risk rings/enforcement (F13), atlas-the-remote-layer (F28),
+GTK theme family beyond Blossom Dark (F24), map-on-station-page.
+
+## What to build next (the vision resumes)
+
+1. **The constellation map (F1/F12).** The force-directed orbit→region→street→ground zoom
+   — the thing that makes it *a map*. The `Focus`/`Altitude` seam, the shared cursor, and
+   the session daemon all feed it; GPU.md carries the render design.
+2. **Persistence (F11).** The sqlite store STATE.md contracts: flows/entities remembered
+   across runs, `Greeting` names, the append-only act log. "The tool forgets everything"
+   is the biggest honesty gap left.
+3. **Causal why (F6).** ppid/pcomm shipped; the next layer is launch-time correlation
+   ("firefox opened this because you clicked…") — see RESEARCH R5.
+4. **Scoring → risk rings (F13).** `Reading`s feeding the confidence/impact rings.
+5. **Atlas (F28).** The remote/BEAM presence layer on top of the session daemon.
 
 ## 🚢 v1.0.0 SHIPPED (2026-07-08) — the crystallize wave
 
@@ -54,21 +106,18 @@ any flow to know why.* Built S1→S4 (docs/V1.md), each step verified live on th
   GTK rows wear the app's real icon; the Why panel shows a category chip + a colour-graded
   **exposure risk badge** for listeners (`Exposure.hex()`).
 
-## What to build next (post-V1, the vision resumes)
+## What the vision needed after v1 (the 2026-06-19 priority list — now shipped/retired)
 
-V1 was built so each of these lands as an addition, not a rewrite. In rough priority:
+*Items 1 and 2 below shipped 2026-07-11 (Wave 2, `b0875dd`); kept for the record.*
 
-1. **The duplex command channel (R3).** `serve --json` is still read-only. Let the agent *move*
-   the shared cursor it can already see: an upstream NDJSON command on `serve --json --socket`
-   (`{"cmd":"focus",...}` → `UserState` → apply). No auth handshake (D25). First agent *write* verb;
-   wire it generically so `set-profile`/`lens` come free.
-2. **Multi-client broadcast (R1 / atlas).** Surveyor serves one client at a time. For a `shared`
-   cursor to reach every observer, add a client registry + fan-out — the natural home for `atlas`
-   (D9/D26: essential to the *maximal* vision, out of V1). Start with a Zig multi-client accept loop.
-3. **The constellation map.** The force-directed orbit→region→street zoom — the hardest 20% V1
-   deliberately deferred, and the thing that makes it *a map*. The `Focus`/`Altitude` seam is built.
-4. **Scoring → risk rings.** `Reading`s (impact/confidence) feeding the confidence/impact rings
-   (DESIGN-LANGUAGE §2/§4). V1 ships the exposure *badge*; the decomposed rings need the score engine.
+1. ✅ **The duplex command channel (R3).** Shipped as the `.json` socket command surface +
+   `surveyor ctl` — the agent moves the shared cursor it can see, and the reply is an
+   ack or an error with a fix.
+2. ✅ **Multi-client broadcast (R1).** Shipped as the poll()-multiplexed session daemon —
+   one capture core, any number of binary/NDJSON observers, one shared cursor. (The
+   *remote* half — atlas — remains unstarted; see atlas/README.md.)
+3. **The constellation map** — still the top open build (see "What to build next").
+4. **Scoring → risk rings** — still open (M3+).
 
 See [RESEARCH.md](RESEARCH.md) R1/R3, [V1.md](V1.md) (deferred column), and DECISIONS **D24/D25/D26**.
 

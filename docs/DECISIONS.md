@@ -74,6 +74,11 @@ Terminal = libvaxis (kitty-graphics logos); GTK = GTK4 via zig-gobject, GPU-acce
 X11+Wayland native. ~~**Elixir/LiveView is demoted to an optional remote view**~~ (supersedes
 the Elixir-primary half of D1). See FRONTENDS.md.
 
+> *Binding note (2026-07-11, F27):* as-built, both bindings differ from this record's
+> original text — the TUI is direct-termios (libvaxis targets 0.15.1; deferred, see M1
+> notes) and GTK is **direct C FFI** (D10's refinement governs). Where this paragraph and
+> D10 disagree, **D10 wins**. zig-gobject remains the eventual binding, not the current one.
+
 **Amended 2026-06-19 (Ben) — `atlas` is essential, not optional.** Calling the BEAM/LiveView
 layer an "optional remote view" was *precedent talking* ("keep it lean, one runtime, no
 glue"). It mis-read the role. The two native frontends (TUI, GTK) are **single-observer**:

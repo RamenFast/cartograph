@@ -8,37 +8,41 @@
 
 ## Start here
 1. [NEXT-SESSION.md](NEXT-SESSION.md) — the operational handoff (the de-facto current-state source of truth).
-2. [VISION.md](VISION.md) — the creative north star (an OS you can *see*; the "why was it sent" layer).
-3. This file — the map.
+2. [VISION-ALIGNMENT-AUDIT.md](VISION-ALIGNMENT-AUDIT.md) — the 32 ranked findings (2026-07-11) and which waves answered them.
+3. [VISION.md](VISION.md) — the creative north star (an OS you can *see*; the "why was it sent" layer).
+4. This file — the map.
 
 ## Where truth lives (when two docs disagree, trust the one named here)
 - **Current state / what's actually built:** `NEXT-SESSION.md` + this status map (not the prose docs).
+- **What actually works, proven from outside:** `scripts/verify-e2e.sh` — 15 checks against the real binaries and a live daemon; CI runs it on every push.
 - **Locked decisions & their rationale:** `DECISIONS.md` (ADR ledger; amendments are dated inline).
-- **The machine contract (fields/events/enums):** `surveyor --schema` — *generated from the code*, so it cannot drift. Prose mirror: `AGENT-INTERFACE.md`.
+- **The machine contract (fields/events/commands/enums):** `surveyor --schema` — *generated from the code*, so it cannot drift. Prose mirror: `AGENT-INTERFACE.md`.
 - **Why a type exists:** `ONTOLOGY.md`. **What's unsolved:** `RESEARCH.md`.
+- **Design-source docs are not reference.** `CLI.md`, `DATA-STREAMS.md`, and parts of `FRONTENDS.md` describe verbs, lenses, and behaviors that are not built; each carries a banner saying so. The shipped verb set is exactly what `--help` and `--schema` print.
 
 ## The docs, by what they're for
 
 | doc | purpose | build status |
 |---|---|---|
-| [VISION.md](VISION.md) | north star + foresight features | ⬜ vision (capture proven; map/why/logos unbuilt) |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | components, privilege, IPC, tiered capture | 🟡 boundary+IPC built; enrichment/enforcement design |
-| [FRONTENDS.md](FRONTENDS.md) | TUI+GTK parity; **`atlas` shared-presence layer**; X11/Wayland | 🟡 TUI+GTK live; atlas scaffold (essential, D9 amended) |
-| [AGENT-INTERFACE.md](AGENT-INTERFACE.md) | the agent/Unix surface (NDJSON, `serve --json`, `--schema`) | 🟢 read surfaces shipped; ⬜ command verbs (RESEARCH R3) |
-| [DECISIONS.md](DECISIONS.md) | ADR ledger D1–D23 (+ amendments) | 🟢 the record |
+| [VISION.md](VISION.md) | north star + foresight features | 🟡 capture/why/identity/shared-session proven; map/logos/enforcement unbuilt |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | components, privilege, IPC, tiered capture | 🟡 boundary+IPC+multi-client daemon built; enforcement design |
+| [FRONTENDS.md](FRONTENDS.md) | TUI+GTK parity; **`atlas` shared-presence layer**; X11/Wayland | 🟡 TUI+GTK live; `atlas/` is an EMPTY placeholder (local multi-observer shipped in surveyor; the remote/BEAM layer is unstarted) |
+| [AGENT-INTERFACE.md](AGENT-INTERFACE.md) | the agent/Unix surface (NDJSON, session daemon, `ctl`, `--schema`) | 🟢 read + command surfaces shipped and e2e-gated |
+| [DECISIONS.md](DECISIONS.md) | ADR ledger D1–D26 (+ amendments) | 🟢 the record |
 | [ONTOLOGY.md](ONTOLOGY.md) | the act ontology (Greeting/Rule/Reading/Ruling) | 🟡 types+IPC thin; no producer/consumer yet (RESEARCH R4) |
-| [RESEARCH.md](RESEARCH.md) | foundational open problems (R1 shared focus … R6 UDP) | ⬜ the to-figure-out list |
+| [RESEARCH.md](RESEARCH.md) | foundational open problems (R1 shared focus … R6 UDP) | 🟡 R1/R3 answered by the session daemon + ctl; the rest open |
 | [DESIGN-LANGUAGE.md](DESIGN-LANGUAGE.md) | colors/rings/glyphs as data; consequence tree | 🟡 palette/scope in code; rings/tree unbuilt |
-| [STATE.md](STATE.md) | persistence + privacy contract | ⬜ contract written; sqlite store unbuilt |
-| [DATA-STREAMS.md](DATA-STREAMS.md) | lenses & profiles | 🟡 lens toggles + profiles live |
+| [STATE.md](STATE.md) | persistence + privacy contract | ⬜ contract written; sqlite store unbuilt — the tool still forgets on exit |
+| [DATA-STREAMS.md](DATA-STREAMS.md) | lenses & profiles | 🟡 lens toggles + profiles live; most named lenses unbuilt (banner inside) |
 | [ROADMAP.md](ROADMAP.md) | milestones M0→M9 | 🟡 M1/M2 done; M3+ planned |
-| [CLI.md](CLI.md) | the "Bloom" CLI/UX philosophy + verbs | ⬜ aspirational (no arg-parser yet; RESEARCH R3) |
+| [CLI.md](CLI.md) | the "Bloom" CLI/UX philosophy + verbs | ⬜ design source, NOT reference — shipped verbs are `--help`'s list (banner inside) |
 | [GPU.md](GPU.md) | AMD: telemetry · render · compute | 🟡 telemetry proven; render/compute design (D13) |
 | [STACK.md](STACK.md) | language/tooling survey + rationale | 🟢 analysis (carries dated historical notes) |
 | [EXPERIMENTS.md](EXPERIMENTS.md) | what was tested + results (E1–E4) | 🟢 evidence (all in the capture layer) |
 | [TOOLCHAIN.md](TOOLCHAIN.md) | Zig 0.16 freeze/longevity plan | 🟢 plan (D16) |
 | [STRUCTURE.md](STRUCTURE.md) | repo layout + collaboration norms | 🟢 layout |
 | [PLANNING.md](PLANNING.md) | historical deliberation (pre-rename) | ⬜ historical (working-title "netscope"; superseded) |
+| [VISION-ALIGNMENT-AUDIT.md](VISION-ALIGNMENT-AUDIT.md) | the 32 ranked findings + verified baseline | 🟢 the mirror (2026-07-11) |
 
 ## The shape in one breath
 **surveyor** (Zig, privileged) is the single producer of truth → **libcartograph** (Zig

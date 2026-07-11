@@ -1,13 +1,16 @@
 # Cartograph
 
-> **A living map of your machine's network.** Every process and who it is
-> talking to — live, by real name, with the *why* one click away.
+> **A living map of your machine's network.** What's running and who it is
+> talking to — live, by real name, with the *why* one click away, and honest
+> `?` marks where the kernel won't say.
 
 ![Cartograph — the GTK window: live attributed flows beside the Why panel](assets/hero.png)
 
 Linux makes you pick between pretty-but-shallow bandwidth dashboards and
 deep-but-firehose packet tools. Cartograph is the missing layer: **per-process
-attribution** (Wireshark can't), **human identity** — rDNS, passive DNS, and
+attribution** (Wireshark can't) with honest unknowns — a kernel-owned or
+other-user flow shows `pid 0` plus its service-derived name rather than a
+guess — **human identity** — rDNS, passive DNS, and
 offline GeoIP/ASN turn `160.79.104.10` into *Anthropic, PBC · US* (OpenSnitch
 won't), a **plain-language "Why" panel** for any flow (nothing on Linux does),
 and it's **native Zig + GTK4** end to end (Portmaster ships a browser).
@@ -85,14 +88,20 @@ arguments joins (or spawns) that daemon automatically.
 
 ## Honest edges
 
-The v1.0.0 loop is: see everything live, by real name, and ask why. Still
-ahead ([docs/ROADMAP.md](docs/ROADMAP.md)): the force-directed **constellation
-map** with orbit→street zoom, **XDP blocking**, decomposed **risk rings** (v1
-ships the exposure badge), nDPI classification, and **`atlas`** — the
-Elixir/LiveView shared-presence layer where a human and their AI(s) watch one
-machine together. TLS SNI is deliberately absent (ECH is eroding it). eBPF
-capabilities are never granted silently — the setcap line above is the one
-deliberate step. UDP byte counters need eBPF (inet_diag has none).
+The loop that ships is: see everything live, by real name, ask why, and point
+any number of windows and agents at one shared session. Still ahead
+([docs/ROADMAP.md](docs/ROADMAP.md)): the force-directed **constellation map**
+with orbit→street zoom (today's altitude cursor is the seam, not the map),
+**persistence** (the tool still forgets everything when it stops — STATE.md is
+the contract, the sqlite store is unbuilt), **XDP blocking**, decomposed
+**risk rings** (v1 ships the exposure badge), nDPI classification, and
+**`atlas`** — the Elixir/LiveView remote-presence layer (`atlas/` is an empty
+placeholder today; the local multi-observer session daemon shipped in
+surveyor). Attribution is honest, not total: kernel-owned, other-user, and
+very short-lived flows show `pid 0` with a service-derived name. TLS SNI is
+deliberately absent (ECH is eroding it). eBPF capabilities are never granted
+silently — the setcap line above is the one deliberate step. UDP byte
+counters need eBPF (inet_diag has none).
 
 ## Design
 

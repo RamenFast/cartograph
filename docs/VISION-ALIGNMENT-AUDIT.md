@@ -4,6 +4,43 @@
 > **Audit date:** 2026-07-11  
 > **Scope:** substantial repository problems and inconsistencies, ranked by importance. This is an audit, not an implementation plan. It deliberately does not prescribe fixes.
 
+## Resolution ledger (2026-07-11, the alignment waves)
+
+Worked the same day, in five waves. Verified by `zig build test` (90/90) and
+`scripts/verify-e2e.sh` (15/15, live daemon). Details in `NEXT-SESSION.md`.
+
+| finding | state | where |
+|---|---|---|
+| F2 GUI never requests eBPF | ✅ fixed | GTK no-args joins/spawns the session daemon with `--bpf --exit-idle` (`b0875dd`) |
+| F3 agent cannot act | ✅ fixed | duplex `.json` socket commands + `surveyor ctl` (`b0875dd`) |
+| F4 shared cursor not connected | ✅ fixed | focus broadcasts to every observer; GUI/TUI visibly follow (`b0875dd`) |
+| F5 one-core-many-observers false | ✅ fixed | poll()-multiplexed daemon (`b0875dd`) |
+| F7 eBPF misattribution | ✅ fixed | no invented identities (`47affb0`) |
+| F8 CGNAT exposure | ✅ fixed | 100.64/8 = exposed (`47affb0`) |
+| F9/F21 socket security | ✅ fixed | 0600 + SO_PEERCRED; no arbitrary unlink (`47affb0`) |
+| F14 degraded capture invisible | ✅ fixed | posture frame in every frontend header (`b0875dd`) |
+| F16/F17/F18 CLI contract violations | ✅ fixed | envelope, ISO ts, canonical `event`, exit 3; `--schema` now documents the daemon, ctl, all 8 events, and command shapes (`f149a15`) |
+| F19 pipe hangup stack trace | ✅ fixed | clean exit 0 (`47affb0`) |
+| F20 fd leak | ✅ fixed | dead-flag + sweep; e2e churn check (`b0875dd`) |
+| F23 station page has no hands | ✅ fixed | stone buttons → station-helper (`20200c4`) |
+| F25 binaries untested | ✅ fixed | `scripts/verify-e2e.sh`, 15 checks (`20200c4`) |
+| F26 no CI | ✅ fixed | `.github/workflows/ci.yml` runs the e2e gate (`20200c4`) |
+| F15 absolute claims | ✅ fixed | README tells the honest-unknowns story (wave 5) |
+| F27 stale/contradictory docs | ✅ fixed | index rewritten; V1/ROADMAP/D9 reality-noted (wave 5) |
+| F28 atlas "scaffold" | ✅ fixed | `atlas/README.md` says placeholder honestly (wave 5) |
+| F32 aspirational docs read as reference | ✅ fixed | banners on CLI/DATA-STREAMS/FRONTENDS (wave 5) |
+| F1 the map | ⏳ open, top of NEXT-SESSION queue | the seam (altitude/focus/daemon) is built |
+| F6 causal why | ⏳ open | ppid/pcomm shipped; launch-time correlation is R5 |
+| F10 identity consistency | ⏳ open | pdns/rDNS/GeoIP live; naming precedence work remains |
+| F11 persistence | ⏳ open | STATE.md is the contract; sqlite store unbuilt |
+| F12 orbit-to-byte | ⏳ open | stops at the row inspector until the map + M5 |
+| F13 risk engine/enforcement | ⏳ open | vocabulary + exposure badge only |
+| F22 full parity | ⏳ open | data-model parity holds; capability parity documented per-surface |
+| F24 GTK theme family | ⏳ open | Blossom Dark only |
+| F29 release usability | ⏳ partly | e2e gate + CI land; RPM-on-RPM-distro, headless pkg, doctor remain |
+| F30 hero privacy tension | ⏳ open | unchanged |
+| F31 visual hierarchy | ⏳ open | unchanged |
+
 ## The project vision that should govern the next session
 
 Cartograph should be **the local-first, living network operating surface for a home Linux machine**, not merely a polished connection table.

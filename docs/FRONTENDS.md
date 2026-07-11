@@ -1,5 +1,12 @@
 # Cartograph — Frontends: one brain, many expressions
 
+> ⚠ **Partly design source.** TUI + GTK are live; parity holds for the flow table, lenses,
+> profiles, Why narration, and the shared cursor. But this page's specifics run ahead of
+> the code in places: the TUI is direct-termios (libvaxis was not adopted), kitty graphics
+> and mouse support are unbuilt, GTK is direct C FFI (not zig-gobject, D10 refined), and
+> `atlas/` is an empty placeholder (see `atlas/README.md`). The diagram below is the
+> intended shape. (Audit F27/F32.)
+
 **Principle: feature parity by construction.** There is exactly one place where features
 live — the Zig core (`surveyor`) plus a shared, frontend-agnostic **view-model**
 (`libcartograph`). Every frontend is a *renderer* over that model, so a capability can
