@@ -520,7 +520,7 @@ fn streamLoop(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, in_fd: ?std
 fn serve(gpa: std.mem.Allocator, io: std.Io, want_bpf: bool, geoip_dir: ?[]const u8) !void {
     var buf: [256 * 1024]u8 = undefined;
     var fw = std.Io.File.stdout().writer(io, &buf);
-    try streamLoop(gpa, io, &fw.interface, null, want_bpf, geoip_dir);
+    streamLoop(gpa, io, &fw.interface, null, want_bpf, geoip_dir) catch |err| return exitIfHangup(err);
 }
 
 /// `surveyor serve --socket <path>` — the real privilege boundary. Bind a Unix socket
@@ -609,7 +609,18 @@ fn streamLoopJson(gpa: std.mem.Allocator, io: std.Io, w: *std.Io.Writer, want_bp
 fn serveJson(gpa: std.mem.Allocator, io: std.Io, want_bpf: bool, geoip_dir: ?[]const u8) !void {
     var buf: [256 * 1024]u8 = undefined;
     var fw = std.Io.File.stdout().writer(io, &buf);
-    try streamLoopJson(gpa, io, &fw.interface, want_bpf, geoip_dir);
+    streamLoopJson(gpa, io, &fw.interface, want_bpf, geoip_dir) catch |err| return exitIfHangup(err);
+}
+
+/// A consumer that stopped reading (`serve --json | head -1`, a bounded `jq`, an agent
+/// sampling one tick) is a normal Unix ending, not a runtime failure (audit F19).
+/// SIGPIPE is already ignored; here the resulting write error becomes a clean exit 0.
+/// Anything else propagates — a real failure must stay loud.
+fn exitIfHangup(err: anyerror) anyerror!void {
+    return switch (err) {
+        error.WriteFailed, error.BrokenPipe => std.process.exit(0),
+        else => err,
+    };
 }
 
 /// `surveyor serve --json --socket <path>` — the same NDJSON stream over a Unix socket, so a

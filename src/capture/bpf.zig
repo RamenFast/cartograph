@@ -81,7 +81,14 @@ fn addrOf(family: u8, bytes: *const [16]u8) cartograph.Addr {
 
 /// Decode one ring-buffer event into the shared `Observation` the FlowTable folds in.
 /// Pure: no kernel, no allocation — the unit-testable core of the eBPF path.
+///
+/// Attribution truth (audit F7): only `CG_CONNECT` (kind 0) runs in reliable process
+/// context. Any other transition may fire in softirq where `bpf_get_current_pid_tgid`
+/// names whatever process the CPU happened to be running — an *unrelated* identity.
+/// A wrong attribution is worse than an honest pid:0, so CG_STATE events carry the
+/// state change only; the connect event (or inet_diag's socket-inode walk) attributes.
 pub fn toObservation(ev: *const CgEvent) Observation {
+    const attributable = ev.kind == 0; // CG_CONNECT
     return .{
         .key = .{
             .proto = .tcp,
@@ -91,9 +98,9 @@ pub fn toObservation(ev: *const CgEvent) Observation {
             .remote_port = ev.dport,
         },
         .state = @enumFromInt(ev.newstate),
-        .pid = ev.pid,
-        .uid = ev.uid,
-        .comm = commSlice(&ev.comm),
+        .pid = if (attributable) ev.pid else 0,
+        .uid = if (attributable) ev.uid else 0,
+        .comm = if (attributable) commSlice(&ev.comm) else "",
         // TCP byte counters/RTT aren't in this hook (the state machine, not the data
         // path); inet_diag remains the TCP byte source. 0 is honest, not a guess —
         // and the fusion-safe table.observe never lets a 0 regress real counters.
@@ -395,6 +402,28 @@ test "an unattributed event keeps pid 0 (the late-merge case)" {
     const obs = toObservation(&ev);
     try testing.expectEqual(@as(u32, 0), obs.pid);
     try testing.expectEqualStrings("", obs.comm);
+}
+
+test "a CG_STATE event never attaches its (possibly unrelated) process identity (F7)" {
+    // The kernel comment is explicit: non-connect transitions may run in softirq where
+    // the current PID is whatever the CPU was doing — attributing it would be a lie.
+    var ev: CgEvent = std.mem.zeroes(CgEvent);
+    ev.family = AF_INET;
+    ev.kind = 1; // CG_STATE
+    ev.newstate = @intFromEnum(TcpState.close_wait);
+    ev.pid = 31337; // an unrelated process that happened to be on-CPU
+    ev.uid = 1000;
+    ev.sport = 44330;
+    ev.dport = 443;
+    ev.saddr = v4(.{ 192, 168, 1, 9 });
+    ev.daddr = v4(.{ 140, 82, 121, 4 });
+    @memcpy(ev.comm[0..9], "innocent\x00");
+
+    const obs = toObservation(&ev);
+    try testing.expectEqual(@as(u32, 0), obs.pid); // honest unknown, not a wrong name
+    try testing.expectEqual(@as(u32, 0), obs.uid);
+    try testing.expectEqualStrings("", obs.comm);
+    try testing.expectEqual(TcpState.close_wait, obs.state); // the state change still lands
 }
 
 test "CgUdpFlow decodes to a UDP observation with byte counters (the QUIC fix)" {

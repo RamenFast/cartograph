@@ -252,7 +252,9 @@ pub fn exposure(key: flow.FlowKey, state: flow.TcpState) Exposure {
     if (a.isLoopback()) return .loopback;
     // 0.0.0.0/:: binds every interface; we can't prove internet-routability without the
     // routing table (M3+), so the honest floor is "reachable from your network".
-    if (a.isUnspecified() or a.isPrivate()) return .network;
+    // RFC6598 shared space (100.64/10 — CGNAT and Tailscale-style overlays) is not
+    // publicly routable either: a red "internet" badge there would be a false alarm.
+    if (a.isUnspecified() or a.isPrivate() or a.isCgnat()) return .network;
     return .internet;
 }
 
@@ -287,6 +289,8 @@ test "exposure flags the attack surface for listeners" {
     try t.expectEqual(Exposure.network, exposure(k(Addr.v4(.{ 192, 168, 1, 9 }), 22), .listen));
     try t.expectEqual(Exposure.internet, exposure(k(Addr.v4(.{ 203, 0, 113, 7 }), 443), .listen));
     try t.expectEqual(Exposure.none, exposure(k(Addr.v4(.{ 192, 168, 1, 9 }), 50000), .established)); // not a listener
+    // a Tailscale/CGNAT listener is network-reachable, never a red "internet" false alarm (F8)
+    try t.expectEqual(Exposure.network, exposure(k(Addr.v4(.{ 100, 114, 165, 77 }), 8443), .listen));
 }
 
 test "every category has a well-formed hex twin (one palette, all renderers)" {

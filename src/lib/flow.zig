@@ -135,6 +135,15 @@ pub const Addr = struct {
         };
     }
 
+    /// RFC6598 shared address space, 100.64.0.0/10 — carrier-grade NAT *and* the range
+    /// overlay networks (Tailscale, ZeroTier-style) hand out. Not publicly routable, so
+    /// a listener bound here is reachable from a network you're on, never "the internet".
+    /// A false red badge teaches the user to distrust the risk language (truth first).
+    pub fn isCgnat(a: Addr) bool {
+        if (a.is_v6) return false;
+        return a.bytes[0] == 100 and a.bytes[1] >= 64 and a.bytes[1] <= 127;
+    }
+
     pub fn isMulticast(a: Addr) bool {
         if (a.is_v6) return a.bytes[0] == 0xff;
         return a.bytes[0] >= 224 and a.bytes[0] <= 239;
@@ -316,6 +325,13 @@ test "addr classification" {
     try t.expect(!Addr.v4(.{ 8, 8, 8, 8 }).isPrivate());
     try t.expect(Addr.v4(.{ 224, 0, 0, 251 }).isMulticast());
     try t.expect(Addr.v6(.{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 }).isLoopback());
+    // RFC6598 shared space (CGNAT / Tailscale-style overlays): not private, but never "internet"
+    try t.expect(Addr.v4(.{ 100, 64, 0, 1 }).isCgnat());
+    try t.expect(Addr.v4(.{ 100, 114, 165, 77 }).isCgnat()); // a live Tailscale addr shape
+    try t.expect(Addr.v4(.{ 100, 127, 255, 255 }).isCgnat()); // top of the /10
+    try t.expect(!Addr.v4(.{ 100, 63, 255, 255 }).isCgnat()); // below the /10
+    try t.expect(!Addr.v4(.{ 100, 128, 0, 0 }).isCgnat()); // above the /10
+    try t.expect(!Addr.v4(.{ 100, 64, 0, 1 }).isPrivate()); // cgnat is its own class
 }
 
 test "unattributed daemon flows stay legible (the ? answer)" {
