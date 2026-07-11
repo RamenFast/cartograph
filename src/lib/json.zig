@@ -19,6 +19,36 @@ const focusmod = @import("focus.zig");
 const ipc = @import("ipc.zig");
 const Flow = flow.Flow;
 
+/// The tool version for envelopes (workspace R2) — the same injected build.zig.zon
+/// string every `--version` prints.
+const tool_version: []const u8 = @import("buildinfo").version;
+
+/// Write epoch-milliseconds as ISO-8601 UTC (`2026-07-11T21:40:00+00:00`) — the
+/// workspace envelope's `ts` (R1). Epoch fields ride along as extras, never instead.
+pub fn writeIso8601(w: *Writer, epoch_ms: i64) Writer.Error!void {
+    const secs: u64 = @intCast(@max(0, @divFloor(epoch_ms, 1000)));
+    const es: std.time.epoch.EpochSeconds = .{ .secs = secs };
+    const day = es.getEpochDay().calculateYearDay();
+    const md = day.calculateMonthDay();
+    const ds = es.getDaySeconds();
+    try w.print("{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}+00:00", .{
+        day.year,                 md.month.numeric(),        md.day_index + 1,
+        ds.getHoursIntoDay(),     ds.getMinutesIntoHour(),   ds.getSecondsIntoMinute(),
+    });
+}
+
+/// The one-shot envelope opener (workspace convention §1): status/tool/version/ts.
+/// Callers append their payload fields and the closing brace.
+fn openEnvelope(w: *Writer, now_ms: i64) Writer.Error!void {
+    try w.writeAll("{\"status\":\"ok\",\"tool\":\"surveyor\"");
+    try field(w, "version", true);
+    try str(w, tool_version);
+    try field(w, "ts", true);
+    try w.writeByte('"');
+    try writeIso8601(w, now_ms);
+    try w.writeByte('"');
+}
+
 /// Write one flow as a single NDJSON line (no trailing newline; caller adds it).
 /// This is the stable `snapshot --json` shape: a bare flow object, no envelope.
 pub fn writeFlow(w: *Writer, f: *const Flow) Writer.Error!void {
@@ -27,11 +57,22 @@ pub fn writeFlow(w: *Writer, f: *const Flow) Writer.Error!void {
     try w.writeByte('}');
 }
 
+/// Open an event line with its discriminator. Canonical field is **`event`**
+/// (workspace R3, adopted at the v5 proto bump); the shipped `ev` rides along as a
+/// legacy alias so existing `jq 'select(.ev==…)'` pipelines keep working. One helper
+/// so no line can carry one tag and not the other.
+fn eventTag(w: *Writer, name: []const u8) Writer.Error!void {
+    try w.writeAll("{\"event\":");
+    try str(w, name);
+    try field(w, "ev", true);
+    try str(w, name);
+}
+
 /// Write a flow as one event line on the `serve --json` stream: the same fields,
-/// tagged with `"ev":"flow"` so an agent watching the live stream can branch on the
+/// tagged `event:flow` so an agent watching the live stream can branch on the
 /// event kind while reading the *identical* flow fields it gets from `snapshot --json`.
 pub fn writeFlowEvent(w: *Writer, f: *const Flow) Writer.Error!void {
-    try w.writeAll("{\"ev\":\"flow\"");
+    try eventTag(w, "flow");
     try writeFlowFields(w, f, true);
     try w.writeByte('}');
 }
@@ -122,7 +163,7 @@ pub fn writeStatus(w: *Writer, flows: []const *Flow, now_ms: i64, posture: ipc.P
     }
     listeners = expo_loop + expo_net + expo_inet;
 
-    try w.writeAll("{\"status\":\"ok\",\"tool\":\"surveyor\"");
+    try openEnvelope(w, now_ms);
     try field(w, "proto_version", true);
     try w.print("{d}", .{ipc.protocol_version});
     try field(w, "ts_ms", true);
@@ -177,7 +218,10 @@ pub fn writeStatus(w: *Writer, flows: []const *Flow, now_ms: i64, posture: ipc.P
 // re-polling a one-shot snapshot. Each line is self-identifying via `"ev"`.
 
 pub fn writeHelloEvent(w: *Writer, proto_version: u16) Writer.Error!void {
-    try w.print("{{\"ev\":\"hello\",\"proto_version\":{d}}}", .{proto_version});
+    try eventTag(w, "hello");
+    try w.print(",\"proto_version\":{d},\"tool\":\"surveyor\",\"version\":", .{proto_version});
+    try str(w, tool_version);
+    try w.writeByte('}');
 }
 
 /// A flow that ended this tick — carries just its key (the same identity fields the
@@ -185,7 +229,7 @@ pub fn writeHelloEvent(w: *Writer, proto_version: u16) Writer.Error!void {
 pub fn writeClosedEvent(w: *Writer, key: flow.FlowKey) Writer.Error!void {
     var ab: [64]u8 = undefined;
     var bb: [64]u8 = undefined;
-    try w.writeAll("{\"ev\":\"closed\"");
+    try eventTag(w, "closed");
     try field(w, "proto", true);
     try str(w, key.proto.label());
     try field(w, "local", true);
@@ -207,7 +251,7 @@ pub fn writeFocusEvent(w: *Writer, f: focusmod.Focus) Writer.Error!void {
     var ab: [64]u8 = undefined;
     var bb: [64]u8 = undefined;
     var db: [160]u8 = undefined;
-    try w.writeAll("{\"ev\":\"focus\"");
+    try eventTag(w, "focus");
     try field(w, "altitude", true);
     try str(w, f.altitude.label());
     try field(w, "shared", true);
@@ -260,27 +304,33 @@ pub fn writeFocusEvent(w: *Writer, f: focusmod.Focus) Writer.Error!void {
 /// `at_ms` is surveyor's clock; `flows` is the live count, so an agent gets a heartbeat
 /// even when nothing changed.
 pub fn writeTickEvent(w: *Writer, at_ms: i64, flows: usize) Writer.Error!void {
-    try w.print("{{\"ev\":\"tick\",\"at_ms\":{d},\"flows\":{d}}}", .{ at_ms, flows });
+    try eventTag(w, "tick");
+    try w.print(",\"at_ms\":{d},\"ts\":\"", .{at_ms});
+    try writeIso8601(w, at_ms);
+    try w.print("\",\"flows\":{d}}}", .{flows});
 }
 
 /// Capture-mode truth on the stream (F14): emitted once after hello, and again if the
 /// posture ever changes, so a watching agent knows whether "everything" means the eBPF
 /// hybrid with true hostnames or polling-only with rDNS guesses.
 pub fn writePostureEvent(w: *Writer, p: ipc.Posture) Writer.Error!void {
-    try w.print("{{\"ev\":\"posture\",\"source\":\"{s}\",\"pdns\":{},\"geoip_asn\":{},\"geoip_country\":{}}}", .{
+    try eventTag(w, "posture");
+    try w.print(",\"source\":\"{s}\",\"pdns\":{},\"geoip_asn\":{},\"geoip_country\":{}}}", .{
         p.sourceLabel(), p.pdns, p.geoip_asn, p.geoip_country,
     });
 }
 
 /// The daemon's answer to an accepted agent command (F3): named verb, ok:true.
 pub fn writeAckEvent(w: *Writer, cmd: []const u8) Writer.Error!void {
-    try w.print("{{\"ev\":\"ack\",\"cmd\":\"{s}\",\"ok\":true}}", .{cmd});
+    try eventTag(w, "ack");
+    try w.print(",\"cmd\":\"{s}\",\"ok\":true}}", .{cmd});
 }
 
 /// The daemon's answer to a rejected agent command: what failed and how to fix it
 /// (the workspace error contract — an error without a fix is a bug).
 pub fn writeErrorEvent(w: *Writer, msg: []const u8, fix: []const u8) Writer.Error!void {
-    try w.writeAll("{\"ev\":\"error\",\"error\":");
+    try eventTag(w, "error");
+    try field(w, "error", true);
     try str(w, msg);
     try field(w, "fix", true);
     try str(w, fix);
@@ -320,14 +370,21 @@ fn fieldDoc(w: *Writer, name: []const u8, typ: []const u8, note: []const u8) Wri
 
 /// Emit the full machine-readable contract for every text surface. One document, valid
 /// JSON, lightly indented so it reads to a human too (the kid and the agent, same pipe).
-pub fn writeSchema(w: *Writer) Writer.Error!void {
-    try w.print("{{\n  \"tool\": \"cartograph/surveyor\",\n  \"protocol_version\": {d},\n", .{ipc.protocol_version});
+/// A one-shot, so it carries the envelope too (workspace R5).
+pub fn writeSchema(w: *Writer, now_ms: i64) Writer.Error!void {
+    try w.writeAll("{\n  \"status\": \"ok\",\n  \"tool\": \"cartograph/surveyor\",\n  \"version\": ");
+    try str(w, tool_version);
+    try w.writeAll(",\n  \"ts\": \"");
+    try writeIso8601(w, now_ms);
+    try w.print("\",\n  \"protocol_version\": {d},\n", .{ipc.protocol_version});
     try w.writeAll(
         \\  "surfaces": {
-        \\    "status_json":   "surveyor status            -> ONE JSON object: listener inventory + exposure badges + flow counts (always JSON)",
+        \\    "status_json":   "surveyor status            -> ONE JSON envelope: capture posture + listener inventory + exposure badges + flow counts (always JSON, declared per R6)",
         \\    "snapshot_json": "surveyor snapshot --json  -> one bare Flow object per line (NDJSON); stable field names",
-        \\    "event_stream":  "surveyor serve --json     -> one event object per line; ev in [hello,flow,closed,tick]",
-        \\    "binary_ipc":    "surveyor serve            -> length-prefixed binary frames (the GUI/TUI hot path)"
+        \\    "event_stream":  "surveyor serve --json     -> one event object per line; event in [hello,posture,focus,flow,closed,tick,ack,error]",
+        \\    "binary_ipc":    "surveyor serve            -> length-prefixed binary frames (the GUI/TUI hot path)",
+        \\    "session_daemon": "surveyor serve --socket <p> -> binary frames on <p>, duplex NDJSON on <p>.json: same events out, JSON command lines in",
+        \\    "ctl":           "surveyor ctl focus <orbit|flow …|app <comm>|asn <n>|host <addr>> [--socket <p>] -> moves the live session's shared cursor; prints the ack/error line"
         \\  },
         \\  "flow_fields": [
         \\
@@ -369,12 +426,24 @@ pub fn writeSchema(w: *Writer) Writer.Error!void {
     try w.writeAll("\n  ],\n");
     try w.writeAll(
         \\  "events": [
-        \\    {"ev":"hello","fields":["proto_version"]},
-        \\    {"ev":"flow","fields":["<every flow_field above>"]},
-        \\    {"ev":"closed","fields":["proto","local","local_port","remote","remote_port"]},
-        \\    {"ev":"tick","fields":["at_ms","flows"]},
-        \\    {"ev":"focus","fields":["altitude","shared","target","entity_kind","entity","proto","local","local_port","remote","remote_port","desc"],"note":"the shared cursor (R1): what is being looked at, at what altitude; target in [machine,entity,flow]"}
+        \\    {"event":"hello","fields":["proto_version","tool","version"]},
+        \\    {"event":"posture","fields":["source","pdns","geoip_asn","geoip_country"],"note":"capture-mode truth: source in [polling,ebpf+polling]; false = that enrichment is not live"},
+        \\    {"event":"flow","fields":["<every flow_field above>"]},
+        \\    {"event":"closed","fields":["proto","local","local_port","remote","remote_port"]},
+        \\    {"event":"tick","fields":["at_ms","ts","flows"]},
+        \\    {"event":"focus","fields":["altitude","shared","target","entity_kind","entity","proto","local","local_port","remote","remote_port","desc"],"note":"the shared cursor: what the session is looking at, at what altitude; target in [machine,entity,flow]; every line also carries legacy alias ev"},
+        \\    {"event":"ack","fields":["cmd","ok"],"note":"a command was accepted"},
+        \\    {"event":"error","fields":["error","fix"],"note":"a command was rejected; fix says how to repair it"}
         \\  ],
+        \\  "commands": [
+        \\    {"cmd":"watch","note":"subscribe-only handshake; optional"},
+        \\    {"cmd":"focus","target":"orbit","note":"back to the whole machine"},
+        \\    {"cmd":"focus","target":"flow","fields":["proto","local","local_port","remote","remote_port","altitude?"],"note":"altitude street (default) or ground"},
+        \\    {"cmd":"focus","target":"app","fields":["app"]},
+        \\    {"cmd":"focus","target":"asn","fields":["asn"]},
+        \\    {"cmd":"focus","target":"host","fields":["host"]}
+        \\  ],
+        \\  "commands_note": "one JSON object per line on the daemon's .json socket; every focus command moves the SHARED session cursor — the human's window visibly follows",
         \\  "enums": {
         \\
     );
@@ -396,7 +465,7 @@ pub fn writeSchema(w: *Writer) Writer.Error!void {
     try jsonStrArray(w, focusmod.Altitude);
     try w.writeAll("\n  },\n");
     try w.writeAll(
-        \\  "exit_codes": {"0":"ok","nonzero":"error (reason on stderr)"}
+        \\  "exit_codes": {"0":"ok","2":"unavailable/runtime failure (stderr names the fix)","3":"bad arguments/unknown verb (stderr shows usage)"}
         \\}
     );
 }
@@ -587,21 +656,46 @@ test "focus event is the agent's JSON rendering of the cursor (R1)" {
     }
 }
 
-test "schema is valid JSON and its enums match the code (no drift)" {
+test "schema is a valid enveloped one-shot and its enums match the code (no drift)" {
     const t = std.testing;
-    var buf: [8192]u8 = undefined;
+    var buf: [16384]u8 = undefined;
     var w = Writer.fixed(&buf);
-    try writeSchema(&w);
+    try writeSchema(&w, 1773500000000);
     const p = try std.json.parseFromSlice(std.json.Value, t.allocator, w.buffered(), .{});
     defer p.deinit();
     const root = p.value.object;
+    // the envelope (workspace R5: discovery verbs are one-shots too)
+    try t.expectEqualStrings("ok", root.get("status").?.string);
+    try t.expect(root.get("version").?.string.len > 0);
+    try t.expect(std.mem.indexOf(u8, root.get("ts").?.string, "T") != null); // ISO-8601
     // the schema describes every flow field the writer emits
     try t.expectEqual(@as(usize, 27), root.get("flow_fields").?.array.items.len);
     // and the category vocabulary is generated from the enum, so counts must agree
     const cats = root.get("enums").?.object.get("category").?.array;
     try t.expectEqual(std.enums.values(identity.Category).len, cats.items.len);
-    try t.expectEqual(@as(usize, 5), root.get("events").?.array.items.len); // hello/flow/closed/tick/focus
+    try t.expectEqual(@as(usize, 8), root.get("events").?.array.items.len); // hello/posture/flow/closed/tick/focus/ack/error
+    try t.expect(root.get("commands") != null); // the duplex command surface is self-described
     // the altitude vocabulary is generated from the enum too
     const alts = root.get("enums").?.object.get("altitude").?.array;
     try t.expectEqual(std.enums.values(focusmod.Altitude).len, alts.items.len);
+}
+
+test "iso-8601 ts renders correctly" {
+    var buf: [64]u8 = undefined;
+    var w = Writer.fixed(&buf);
+    // 2026-01-01T00:00:00Z == 1767225600000 ms
+    try writeIso8601(&w, 1767225600000);
+    try std.testing.expectEqualStrings("2026-01-01T00:00:00+00:00", w.buffered());
+}
+
+test "event lines carry both the canonical event field and the legacy ev alias" {
+    const t = std.testing;
+    var buf: [512]u8 = undefined;
+    var w = Writer.fixed(&buf);
+    try writeTickEvent(&w, 1767225600000, 3);
+    const p = try std.json.parseFromSlice(std.json.Value, t.allocator, w.buffered(), .{});
+    defer p.deinit();
+    try t.expectEqualStrings("tick", p.value.object.get("event").?.string); // R3 canonical
+    try t.expectEqualStrings("tick", p.value.object.get("ev").?.string); // grandfathered alias
+    try t.expectEqualStrings("2026-01-01T00:00:00+00:00", p.value.object.get("ts").?.string);
 }

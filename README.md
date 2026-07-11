@@ -71,11 +71,17 @@ contract is self-describing. An AI watching your machine reads the same live
 view-model the GUI renders ([docs/AGENT-INTERFACE.md](docs/AGENT-INTERFACE.md)):
 
 ```bash
-surveyor --schema | jq                # the full contract: fields, events, vocabularies
-surveyor status                       # one-shot posture: listeners, exposure, counts (one JSON object)
+surveyor --schema | jq                # the full contract: fields, events, commands, vocabularies
+surveyor status                       # one-shot posture: capture mode, listeners, exposure (one JSON envelope)
 surveyor snapshot | jq                # auto-NDJSON on a pipe — no flag needed
-surveyor serve --json | jq -c 'select(.ev=="flow" and .as_org!="")'   # live watch, by owner
+surveyor serve --json | jq -c 'select(.event=="flow" and .as_org!="")'  # live watch, by owner
+surveyor ctl focus app firefox        # move the shared cursor — the human's window follows
 ```
+
+And the agent is not just a reader. `surveyor serve --socket` runs one capture
+core as the box's session daemon; every window and every agent attaches to the
+same session, sees the same cursor, and can move it — `cartograph-gtk` with no
+arguments joins (or spawns) that daemon automatically.
 
 ## Honest edges
 

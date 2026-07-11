@@ -23,8 +23,9 @@ passive-DNS true hostnames from the box's own :53 answers.
 # COMMANDS
 
 *status*
-	One-shot posture as ONE JSON object: listener inventory, exposure/risk
-	badges, flow counts. Always JSON.
+	One-shot posture as ONE JSON envelope (status/tool/version/ts): capture
+	posture (polling vs ebpf+polling, live enrichments), listener inventory,
+	exposure/risk badges, flow counts. Always JSON.
 
 *snapshot* [*--json*]
 	One-shot attributed flow table. Pretty at a TTY; auto-NDJSON when stdout
@@ -34,13 +35,22 @@ passive-DNS true hostnames from the box's own :53 answers.
 	Stream live binary IPC frames to stdout (pipe to a frontend).
 
 *serve --socket* _path_
-	Serve frames over a Unix socket — the daemon privilege boundary. Frontends
-	(*cartograph*, *cartograph-gtk*) connect unprivileged; the socket is
-	full-duplex (session/lens/focus changes travel upstream).
+	Run as the box's session daemon. Binary frames on _path_ for windows;
+	duplex NDJSON on _path_.json for agents — the same events out, one JSON
+	command per line in. All observers share one capture core and one session
+	cursor: a focus moved by any of them is followed by all of them. With
+	*--exit-idle* the daemon exits when its last observer disconnects.
+	Default path: _$XDG_RUNTIME_DIR/cartograph.sock_.
 
 *serve --json* [*--socket* _path_]
-	The same live view-model as NDJSON events (hello/flow/closed/tick lines) —
-	the agent's live watch surface.
+	The same live view-model as NDJSON events
+	(hello/posture/focus/flow/closed/tick lines) — the agent's live watch
+	surface. Every line carries a canonical *event* field (legacy alias: *ev*).
+
+*ctl focus* <*orbit* | *flow* _proto local:port remote:port_ | *app* _comm_ | *asn* _n_ | *host* _addr_> [*--altitude* _a_] [*--socket* _path_]
+	Move the live session's shared cursor — every attached window follows.
+	Speaks one JSON command to the daemon's _.json_ socket and prints the
+	ack/error reply. Exit: 0 acked, 2 no daemon, 3 bad grammar.
 
 *schema*, *--schema*
 	Print the machine-readable contract of every surface (fields, events,
@@ -72,12 +82,16 @@ Who is my machine talking to right now, by name?
 
 Watch live flows as JSON events, filtered to fresh ones:
 
-	surveyor serve --json | jq -c 'select(.ev=="flow" and .fresh)'
+	surveyor serve --json | jq -c 'select(.event=="flow" and .fresh)'
 
-Run as the shared daemon and attach a frontend across the privilege boundary:
+Run as the shared session daemon and attach a frontend across the privilege boundary:
 
-	surveyor serve --socket /tmp/cartograph.sock &++
-cartograph --socket /tmp/cartograph.sock
+	surveyor serve --socket /run/user/$UID/cartograph.sock &++
+cartograph
+
+Point every attached window at firefox's flows (the agent's hand):
+
+	surveyor ctl focus app firefox
 
 # SEE ALSO
 

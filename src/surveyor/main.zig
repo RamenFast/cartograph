@@ -57,7 +57,7 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, a, "--geoip")) {
             geoip_dir = args.next() orelse return fail(io, "--geoip needs a directory", .{});
         } else {
-            return fail(io, "unknown flag '{s}' — see `surveyor --help`", .{a});
+            return failUsage(io, "unknown flag '{s}' — see `surveyor --help`", .{a});
         }
     }
 
@@ -99,8 +99,10 @@ pub fn main(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "-h")) {
         try usage(io, .stdout); // help was *asked for* → it's the output, not a complaint
     } else {
+        // Unknown verb: usage + exit 3 (workspace R4) — an agent's typo must be
+        // distinguishable from a runtime failure.
         try usage(io, .stderr);
-        return fail(io, "unknown command '{s}'", .{cmd});
+        return failUsage(io, "unknown command '{s}'", .{cmd});
     }
 }
 
@@ -935,7 +937,7 @@ fn printSchema(io: std.Io) !void {
     var buf: [16 * 1024]u8 = undefined;
     var fw = std.Io.File.stdout().writer(io, &buf);
     const w = &fw.interface;
-    try cartograph.json.writeSchema(w);
+    try cartograph.json.writeSchema(w, capture.nowMs(io));
     try w.writeByte('\n');
     try w.flush();
 }

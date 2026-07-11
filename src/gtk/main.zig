@@ -884,6 +884,15 @@ fn fail(io: std.Io, comptime fmt: []const u8, fmt_args: anytype) noreturn {
     std.process.exit(2);
 }
 
+/// A usage error (bad flag/verb): exit 3, per the workspace convention (R4).
+fn failUsage(io: std.Io, comptime fmt: []const u8, fmt_args: anytype) noreturn {
+    var buf: [512]u8 = undefined;
+    var fw = std.Io.File.stderr().writer(io, &buf);
+    fw.interface.print("cartograph-gtk: " ++ fmt ++ "\n", fmt_args) catch {};
+    fw.interface.flush() catch {};
+    std.process.exit(3);
+}
+
 /// Spawn `surveyor serve --bpf --socket <path> --exit-idle` as the box's session daemon
 /// (the double-click path, audit F2). `--bpf` makes the documented setcap opt-in *count*
 /// here — surveyor upgrades to the hybrid source when the binary holds caps and degrades
@@ -974,7 +983,7 @@ pub fn main(init: std.process.Init) !void {
             try fw.interface.flush();
             return;
         } else {
-            return fail(io, "unknown flag '{s}' — see `cartograph-gtk --help`", .{a});
+            return failUsage(io, "unknown flag '{s}' — see `cartograph-gtk --help`", .{a});
         }
     }
 
